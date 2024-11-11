@@ -2483,6 +2483,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
      * need to delete all the keys in the slots we lost ownership. */
     uint16_t dirty_slots[CLUSTER_SLOTS];
     int dirty_slots_count = 0;
+    int delete_dirty_slots = 0;
 
     /* We should detect if sender is new primary of our shard.
      * We will know it if all our slots were migrated to sender, and sender
@@ -2709,6 +2710,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
             serverLog(LL_NOTICE,
                       "My last slot was migrated to node %.40s (%s) in shard %.40s. I am now an empty primary.",
                       sender->name, sender->human_nodename, sender->shard_id);
+            /* We may still have dirty slots when we became a empty primary due to
+             * a bad migration.
+             *
+             * In order to maintain a consistent state between keys and slots
+             * we need to remove all the keys from the slots we lost. */
+            delete_dirty_slots = 1;
         }
     } else if (dirty_slots_count) {
         /* If we are here, we received an update message which removed
@@ -2718,6 +2725,10 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
          *
          * In order to maintain a consistent state between keys and slots
          * we need to remove all the keys from the slots we lost. */
+        delete_dirty_slots = 1;
+    }
+
+    if (delete_dirty_slots) {
         for (int j = 0; j < dirty_slots_count; j++) {
             serverLog(LL_NOTICE, "Deleting keys in dirty slot %d on node %.40s (%s) in shard %.40s", dirty_slots[j],
                       myself->name, myself->human_nodename, myself->shard_id);
@@ -6098,7 +6109,7 @@ void removeChannelsInSlot(unsigned int slot) {
 /* Remove all the keys in the specified hash slot.
  * The number of removed items is returned. */
 unsigned int delKeysInSlot(unsigned int hashslot) {
-    if (!kvstoreDictSize(server.db->keys, hashslot)) return 0;
+    if (!countKeysInSlot(hashslot)) return 0;
 
     /* We may lose a slot during the pause. We need to track this
      * state so that we don't assert in propagateNow(). */
