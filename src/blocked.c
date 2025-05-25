@@ -374,7 +374,7 @@ void blockForKeys(client *c, int btype, robj **keys, int numkeys, mstime_t timeo
     list *l;
     int j;
 
-    if (!c->flag.reprocessing_command) {
+    if (!c->flag.reexecuting_command) {
         /* If the client is re-processing the command, we do not set the timeout
          * because we need to retain the client's original timeout. */
         c->bstate.timeout = timeout;
@@ -648,6 +648,7 @@ static void unblockClientOnKey(client *c, robj *key) {
      * we need to re process the command again */
     if (c->flag.pending_command) {
         c->flag.pending_command = 0;
+        c->flag.reexecuting_command = 1;
         /* We want the command processing and the unblock handler (see RM_Call 'K' option)
          * to run atomically, this is why we must enter the execution unit here before
          * running the command, and exit the execution unit after calling the unblock handler (if exists).
@@ -666,6 +667,8 @@ static void unblockClientOnKey(client *c, robj *key) {
         }
         exitExecutionUnit();
         afterCommand(c);
+        /* Clear the reexecuting_command flag after the proc is executed. */
+        c->flag.reexecuting_command = 0;
         server.current_client = old_client;
     }
 }
