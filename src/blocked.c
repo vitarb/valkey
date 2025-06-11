@@ -230,14 +230,14 @@ void unblockClient(client *c, int queue_for_reprocessing) {
 /* Check if the specified client can be safely timed out using
  * unblockClientOnTimeout(). */
 int blockedClientMayTimeout(client *c) {
-    if (c->bstate->btype == BLOCKED_MODULE) {
+    if (c->bstate.btype == BLOCKED_MODULE) {
         return moduleBlockedClientMayTimeout(c);
     }
 
-    if (c->bstate->btype == BLOCKED_LIST ||
-        c->bstate->btype == BLOCKED_ZSET ||
-        c->bstate->btype == BLOCKED_STREAM ||
-        c->bstate->btype == BLOCKED_WAIT) {
+    if (c->bstate.btype == BLOCKED_LIST ||
+        c->bstate.btype == BLOCKED_ZSET ||
+        c->bstate.btype == BLOCKED_STREAM ||
+        c->bstate.btype == BLOCKED_WAIT) {
         return 1;
     }
     return 0;
