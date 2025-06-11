@@ -42,18 +42,9 @@
 #include <fcntl.h>
 #endif
 
-#if defined(__APPLE__) && defined(MAC_OS_X_VERSION_MAX_ALLOWED) && MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
-#define MAC_OS_10_6_DETECTED
-#endif
-
-/* Define valkey_fstat to fstat or fstat64() */
-#if defined(__APPLE__) && !defined(MAC_OS_10_6_DETECTED)
-#define valkey_fstat fstat64
-#define valkey_stat stat64
-#else
+/* Define valkey_fstat to fstat */
 #define valkey_fstat fstat
 #define valkey_stat stat
-#endif
 
 /* Test for proc filesystem */
 #ifdef __linux__
@@ -112,7 +103,7 @@
 #endif
 
 /* Detect for kqueue */
-#if (defined(__APPLE__) && defined(MAC_OS_10_6_DETECTED)) || defined(__DragonFly__) || defined(__FreeBSD__) || \
+#if defined(__APPLE__) || defined(__DragonFly__) || defined(__FreeBSD__) || \
     defined(__OpenBSD__) || defined(__NetBSD__)
 #define HAVE_KQUEUE 1
 #endif
@@ -236,7 +227,7 @@ void setproctitle(const char *fmt, ...);
     defined(ibm032) || defined(ibm370) || defined(MIPSEB) || defined(_MIPSEB) || defined(_IBMR2) || defined(DGUX) || \
     defined(apollo) || defined(__convex__) || defined(_CRAY) || defined(__hppa) || defined(__hp9000) ||              \
     defined(__hp9000s300) || defined(__hp9000s700) || defined(BIT_ZERO_ON_LEFT) || defined(m68k) ||                  \
-    defined(__sparc) || (defined(__APPLE__) && defined(__POWERPC__))
+    defined(__sparc)
 #define BYTE_ORDER BIG_ENDIAN
 #endif
 #endif /* linux */

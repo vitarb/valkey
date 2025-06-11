@@ -1206,24 +1206,11 @@ static void *getAndSetMcontextEip(ucontext_t *uc, void *eip) {
         }                                       \
         return old_val;                         \
     } while (0)
-#if defined(__APPLE__) && !defined(MAC_OS_10_6_DETECTED)
-/* OSX < 10.6 */
-#if defined(__x86_64__)
-    GET_SET_RETURN(uc->uc_mcontext->__ss.__rip, eip);
-#elif defined(__i386__)
-    GET_SET_RETURN(uc->uc_mcontext->__ss.__eip, eip);
-#else
-    /* OSX PowerPC */
-    GET_SET_RETURN(uc->uc_mcontext->__ss.__srr0, eip);
-#endif
-#elif defined(__APPLE__) && defined(MAC_OS_10_6_DETECTED)
-/* OSX >= 10.6 */
+#if defined(__APPLE__)
 #if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
     GET_SET_RETURN(uc->uc_mcontext->__ss.__rip, eip);
 #elif defined(__i386__)
     GET_SET_RETURN(uc->uc_mcontext->__ss.__eip, eip);
-#elif defined(__ppc__)
-    GET_SET_RETURN(uc->uc_mcontext->__ss.__srr0, eip);
 #else
     /* OSX ARM64 */
     void *old_val = (void *)arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
@@ -1313,7 +1300,7 @@ void logRegisters(ucontext_t *uc) {
     } while (0)
 
 /* OSX */
-#if defined(__APPLE__) && defined(MAC_OS_10_6_DETECTED)
+#if defined(__APPLE__)
     /* OSX AMD64 */
 #if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
     serverLog(LL_WARNING,
@@ -1386,7 +1373,6 @@ void logRegisters(ucontext_t *uc) {
         (unsigned long)arm_thread_state64_get_pc(uc->uc_mcontext->__ss), (unsigned long)uc->uc_mcontext->__ss.__cpsr);
     logStackContent((void **)arm_thread_state64_get_sp(uc->uc_mcontext->__ss));
 #else
-    /* At the moment we do not implement this for PowerPC */
     NOT_SUPPORTED();
 #endif
 /* Linux */
