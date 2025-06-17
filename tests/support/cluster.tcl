@@ -230,7 +230,8 @@ proc ::valkey_cluster::__dispatch__ {id method args} {
             if {[catch {$link $method {*}$args} e]} {
                 if {$link eq {} || \
                     [string range $e 0 4] eq {MOVED} || \
-                    [string range $e 0 2] eq {I/O} \
+                    [string range $e 0 2] eq {I/O} || \
+		    [string range $e 0 10] eq {CLUSTERDOWN} \
                 } {
                     # MOVED redirection.
                     ::valkey_cluster::__method__refresh_nodes_map $id

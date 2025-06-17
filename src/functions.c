@@ -159,6 +159,11 @@ static void engineLibraryDispose(dict *d, void *obj) {
     engineLibraryFree(obj);
 }
 
+/* Wrapper to free a library when used as a list free callback */
+static void engineLibraryListFree(void *obj) {
+    engineLibraryFree(obj);
+}
+
 /* Clear all the functions from the given library ctx */
 void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
     dictEmpty(lib_ctx->functions, NULL);
@@ -338,7 +343,7 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
             } else {
                 if (!old_libraries_list) {
                     old_libraries_list = listCreate();
-                    listSetFreeMethod(old_libraries_list, (void (*)(void *))engineLibraryFree);
+                    listSetFreeMethod(old_libraries_list, engineLibraryListFree);
                 }
                 libraryUnlink(functions_lib_ctx_dst, old_li);
                 listAddNodeTail(old_libraries_list, old_li);
