@@ -209,11 +209,6 @@ proc cluster_allocate_replicas {masters replicas} {
 # Setup method to be executed to configure the cluster before the
 # tests run.
 proc cluster_setup {masters replicas node_count slot_allocator replica_allocator code} {
-    set config_epoch 1
-    for {set i 0} {$i < $node_count} {incr i} {
-        R $i CLUSTER SET-CONFIG-EPOCH $config_epoch
-        incr config_epoch
-    }
 
     # Have all nodes meet
     if {$::tls} {
