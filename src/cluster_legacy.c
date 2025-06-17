@@ -3489,8 +3489,8 @@ int clusterProcessPacket(clusterLink *link) {
                         serverLog(LL_VERBOSE,
                                   "Node %.40s (%s) has old slots configuration, sending "
                                   "an UPDATE message about %.40s (%s)",
-                                  sender->name, sender->human_nodename,
-                                  server.cluster->slots[j]->name, server.cluster->slots[j]->human_nodename);
+                                  sender->name, sender->human_nodename, server.cluster->slots[j]->name,
+                                  server.cluster->slots[j]->human_nodename);
                         clusterSendUpdate(sender->link, server.cluster->slots[j]);
 
                         /* TODO: instead of exiting the loop send every other
@@ -4406,8 +4406,8 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
         serverLog(LL_VERBOSE,
                   "Node %.40s (%s) has old slots configuration, sending "
                   "an UPDATE message about %.40s (%s)",
-                  node->name, node->human_nodename,
-                  server.cluster->slots[j]->name, server.cluster->slots[j]->human_nodename);
+                  node->name, node->human_nodename, server.cluster->slots[j]->name,
+                  server.cluster->slots[j]->human_nodename);
         clusterSendUpdate(node->link, server.cluster->slots[j]);
         return;
     }

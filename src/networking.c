@@ -101,7 +101,8 @@ void linkClient(client *c) {
 static void clientSetDefaultAuth(client *c) {
     /* If the default user does not require authentication, the user is
      * directly authenticated. */
-    clientSetUser(c, DefaultUser, (DefaultUser->flags & USER_FLAG_NOPASS) && !(DefaultUser->flags & USER_FLAG_DISABLED));
+    clientSetUser(c, DefaultUser,
+                  (DefaultUser->flags & USER_FLAG_NOPASS) && !(DefaultUser->flags & USER_FLAG_DISABLED));
 }
 
 /* Attach the user u to this client.
@@ -111,8 +112,7 @@ static void clientSetDefaultAuth(client *c) {
 void clientSetUser(client *c, user *u, int authenticated) {
     c->user = u;
     c->flag.authenticated = authenticated;
-    if (authenticated)
-        c->flag.ever_authenticated = authenticated;
+    if (authenticated) c->flag.ever_authenticated = authenticated;
 }
 
 static int clientEverAuthenticated(client *c) {
@@ -3776,7 +3776,7 @@ NULL
         if (getLongLongFromObjectOrReply(c, c->argv[2], &id, NULL) != C_OK) return;
         struct client *target = lookupClientByID(id);
         /* Note that we never try to unblock a client blocked on a module command,
-     * or a client blocked by CLIENT PAUSE or some other blocking type which
+         * or a client blocked by CLIENT PAUSE or some other blocking type which
          * doesn't have a timeout callback (even in the case of UNBLOCK ERROR).
          * The reason is that we assume that if a command doesn't expect to be timedout,
          * it also doesn't expect to be unblocked by CLIENT UNBLOCK */
@@ -4395,8 +4395,7 @@ int checkClientOutputBufferLimits(client *c) {
 
     /* For unauthenticated clients which were also never authenticated before the output buffer is limited to prevent
      * them from abusing it by not reading the replies */
-    if (used_mem > REPLY_BUFFER_SIZE_UNAUTHENTICATED_CLIENT && authRequired(c) && !clientEverAuthenticated(c))
-        return 1;
+    if (used_mem > REPLY_BUFFER_SIZE_UNAUTHENTICATED_CLIENT && authRequired(c) && !clientEverAuthenticated(c)) return 1;
 
     class = getClientType(c);
     /* For the purpose of output buffer limiting, primaries are handled

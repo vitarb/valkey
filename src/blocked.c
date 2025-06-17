@@ -234,9 +234,7 @@ int blockedClientMayTimeout(client *c) {
         return moduleBlockedClientMayTimeout(c);
     }
 
-    if (c->bstate.btype == BLOCKED_LIST ||
-        c->bstate.btype == BLOCKED_ZSET ||
-        c->bstate.btype == BLOCKED_STREAM ||
+    if (c->bstate.btype == BLOCKED_LIST || c->bstate.btype == BLOCKED_ZSET || c->bstate.btype == BLOCKED_STREAM ||
         c->bstate.btype == BLOCKED_WAIT) {
         return 1;
     }
