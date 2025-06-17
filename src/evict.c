@@ -150,7 +150,7 @@ int evictionPoolPopulate(serverDb *db, kvstore *samplekvs, struct evictionPoolEn
     for (j = 0; j < count; j++) {
         unsigned long long idle;
         sds key;
-        robj *o;
+        robj *o = NULL;
         dictEntry *de;
 
         de = samples[j];
