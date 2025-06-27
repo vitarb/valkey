@@ -10,6 +10,51 @@ SECURITY: There are security fixes in the release.
 --------------------------------------------------------------------------------
 
 ================================================================================
+Valkey 8.0.5  -  Released Thu 22 Aug 2025
+================================================================================
+
+Upgrade urgency SECURITY: This release includes security fixes we recommend you
+apply as soon as possible.
+
+Bug fixes
+=========
+* Fix clients remaining blocked when reprocessing commands after certain
+  blocking operations (#2109)
+* Fix a memory corruption issue in the sharded pub/sub unsubscribe logic (#2137)
+* Fix potential memory leak by ensuring module context is freed when `aux_save2`
+  callback writes no data (#2132)
+* Fix `CLIENT UNBLOCK` triggering unexpected errors when used on paused clients
+  (#2117)
+* Fix missing NULL check on `SSL_new()` when creating outgoing TLS connections
+  (#2140)
+* Fix incorrect casting of ping extension lengths to prevent silent packet drops
+  (#2144)
+* Fix replica failover stall due to outdated config epoch (#2178)
+* Fix incorrect port/tls-port info in `CLUSTER SLOTS`/`CLUSTER NODES` after
+  dynamic config change (#2186)
+* Ensure empty error tables in Lua scripts don't crash Valkey (#2229)
+* Fix client tracking memory overhead calculation (#2360)
+* Handle divergent shard-id from nodes.conf and reconcile to the primary node's
+  shard-id (#2174)
+* Fix pre-size hashtables per slot when reading RDB files (#2466)
+
+Behavior changes
+================
+* Trigger election immediately during a forced manual failover (`CLUSTER
+  FAILOVER FORCE`) to avoid delay (#1067)
+* Reset ongoing election state when initiating a new manual failover (#1274)
+
+Logging and Tooling Improvements
+================================
+* Add support to drop all cluster packets (#1252)
+* Improve log clarity in failover auth denial message (#1341)
+
+Security fixes
+==============
+* CVE-2025-27151: Check length of AOF file name in valkey-check-aof and reject
+  paths longer than `PATH_MAX` (#2146)
+
+================================================================================
 Valkey 8.0.4  -  Released Mon 07 July 2025
 ================================================================================
 
