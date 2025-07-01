@@ -84,6 +84,12 @@ typedef enum readFromReplica {
     FROM_ALL
 } readFromReplica;
 
+typedef enum {
+    DS_ZSET = 0,
+    DS_GZSET,
+    DS_BOTH
+} dataStructure;
+
 static struct config {
     aeEventLoop *el;
     cliConnInfo conn_info;
@@ -116,6 +122,7 @@ static struct config {
     char *tests;
     int stdinarg; /* get last arg from stdin. (-x option) */
     int precision;
+    dataStructure ds;
     int num_threads;
     struct benchmarkThread **threads;
     int cluster_mode;
@@ -186,6 +193,12 @@ typedef struct serverConfig {
     sds appendonly;
 } serverConfig;
 
+typedef struct benchTest {
+    const char *logical_name;
+    const char *cmd_tpl;
+    const char *gz_cmd_tpl;
+} benchTest;
+
 /* Prototypes */
 static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 static void createMissingClients(client c);
@@ -200,6 +213,7 @@ static void freeServerConfig(serverConfig *cfg);
 static int fetchClusterSlotsConfiguration(client c);
 static void updateClusterSlotsConfiguration(void);
 static long long showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData);
+static void buildCommand(const struct benchTest *test, int use_gzset, const char *tag, const char *data, char **cmd_out, int *len_out);
 
 /* Dict callbacks */
 static uint64_t dictSdsHash(const void *key);
@@ -230,6 +244,23 @@ static int dictSdsKeyCompare(const void *key1, const void *key2) {
     l2 = sdslen((sds)key2);
     if (l1 != l2) return 0;
     return memcmp(key1, key2, l1) == 0;
+}
+
+static void buildCommand(const benchTest *test, int use_gzset, const char *tag, const char *data, char **cmd_out, int *len_out) {
+    UNUSED(data);
+    const char *tpl = use_gzset ? (test->gz_cmd_tpl ? test->gz_cmd_tpl : test->cmd_tpl) : test->cmd_tpl;
+    if (!strcmp(test->logical_name, "zadd")) {
+        char *score = "0";
+        if (config.randomkeys) score = "__rand_int__";
+        *len_out = redisFormatCommand(cmd_out, tpl, tag, score);
+    } else if (!strcmp(test->logical_name, "zpopmin")) {
+        *len_out = redisFormatCommand(cmd_out, tpl, tag);
+    } else if (!strncmp(test->logical_name, "zrange", 6)) {
+        *len_out = redisFormatCommand(cmd_out, tpl, tag);
+    } else {
+        /* Fallback: no parameters */
+        *len_out = redisFormatCommand(cmd_out, tpl);
+    }
 }
 
 static dictType dtype = {
@@ -507,6 +538,9 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                                     r->str);
                         } else
                             fprintf(stderr, "Error from server: %s\n", r->str);
+                        if (strstr(r->str, "unknown command 'GZ") != NULL) {
+                            fprintf(stderr, "GZSET commands not available - is the module loaded?\n");
+                        }
                         exit(1);
                     }
                 }
@@ -1413,6 +1447,19 @@ int parseOptions(int argc, char **argv) {
                 config.num_threads = MAX_THREADS;
             } else if (config.num_threads < 0)
                 config.num_threads = 0;
+        } else if (!strcmp(argv[i], "--ds")) {
+            if (lastarg) goto invalid;
+            char *dsarg = argv[++i];
+            if (!strcasecmp(dsarg, "zset"))
+                config.ds = DS_ZSET;
+            else if (!strcasecmp(dsarg, "gzset"))
+                config.ds = DS_GZSET;
+            else if (!strcasecmp(dsarg, "both"))
+                config.ds = DS_BOTH;
+            else {
+                fprintf(stderr, "Invalid --ds value. Use zset, gzset or both.\n");
+                exit(1);
+            }
         } else if (!strcmp(argv[i], "--cluster")) {
             config.cluster_mode = 1;
         } else if (!strcmp(argv[i], "--rfr")) {
@@ -1566,7 +1613,9 @@ usage:
         "                    loaded when running the 'function_load' test. (default 10).\n"
         " --num-keys-in-fcall <num>\n"
         "                    Sets the number of keys passed to FCALL command when running\n"
-        "                    the 'fcall' test. (default 1)\n",
+        "                    the 'fcall' test. (default 1)\n"
+        " --ds <zset|gzset|both>\n"
+        "                    Select data structure to benchmark. 'both' runs ZSET and GZSET.\n",
         tls_usage,
         " --help             Output this help and exit.\n"
         " --version          Output version and exit.\n\n"
@@ -1718,6 +1767,7 @@ int main(int argc, char **argv) {
     config.stdinarg = 0;
     config.conn_info.auth = NULL;
     config.precision = DEFAULT_LATENCY_PRECISION;
+    config.ds = DS_ZSET;
     config.num_threads = 0;
     config.threads = NULL;
     config.cluster_mode = 0;
@@ -1873,6 +1923,17 @@ int main(int argc, char **argv) {
     }
 
     /* Run default benchmark suite. */
+    benchTest zset_tests[] = {
+        {"zadd", "ZADD myzset%s %s element:__rand_int__", "GZADD myzset%s %s element:__rand_int__"},
+        {"zpopmin", "ZPOPMIN myzset%s", "GZPOPMIN myzset%s"},
+        {"zrange_100", "ZRANGE myzset%s 0 99", "GZRANGE myzset%s 0 99"},
+        {"zrange_300", "ZRANGE myzset%s 0 299", "GZRANGE myzset%s 0 299"},
+        {"zrange_500", "ZRANGE myzset%s 0 499", "GZRANGE myzset%s 0 499"},
+        {"zrange_600", "ZRANGE myzset%s 0 599", "GZRANGE myzset%s 0 599"}
+    };
+    int zset_tests_count = sizeof(zset_tests) / sizeof(zset_tests[0]);
+    int run_modes_arr[2] = {DS_ZSET, DS_GZSET};
+
     data = zmalloc(config.datasize + 1);
     do {
         genBenchmarkRandomData(data, config.datasize);
@@ -1946,18 +2007,39 @@ int main(int argc, char **argv) {
             free(cmd);
         }
 
-        if (test_is_selected("zadd")) {
-            char *score = "0";
-            if (config.randomkeys) score = "__rand_int__";
-            len = redisFormatCommand(&cmd, "ZADD myzset%s %s element:__rand_int__", tag, score);
-            benchmark("ZADD", cmd, len);
-            free(cmd);
+        if (test_is_selected("zrange") || test_is_selected("zrange_100") ||
+            test_is_selected("zrange_300") || test_is_selected("zrange_500") ||
+            test_is_selected("zrange_600")) {
+            benchTest prep = {"zadd", "ZADD myzset%s %s element:__rand_int__",
+                               "GZADD myzset%s %s element:__rand_int__"};
+            int modes = (config.ds == DS_BOTH) ? 2 : 1;
+            for (int m = 0; m < modes; ++m) {
+                int use_gz = (config.ds == DS_GZSET) ||
+                             (config.ds == DS_BOTH && run_modes_arr[m] == DS_GZSET);
+                buildCommand(&prep, use_gz, tag, data, &cmd, &len);
+                benchmark("ZADD (needed to benchmark ZRANGE)", cmd, len);
+                free(cmd);
+            }
         }
 
-        if (test_is_selected("zpopmin")) {
-            len = redisFormatCommand(&cmd, "ZPOPMIN myzset%s", tag);
-            benchmark("ZPOPMIN", cmd, len);
-            free(cmd);
+        for (int ti = 0; ti < zset_tests_count; ++ti) {
+            benchTest *t = &zset_tests[ti];
+            if (!test_is_selected(t->logical_name)) continue;
+            int modes = (config.ds == DS_BOTH) ? 2 : 1;
+            for (int m = 0; m < modes; ++m) {
+                int use_gz = (config.ds == DS_GZSET) || (config.ds == DS_BOTH && run_modes_arr[m] == DS_GZSET);
+                if (use_gz && t->gz_cmd_tpl == NULL) continue;
+                buildCommand(t, use_gz, tag, data, &cmd, &len);
+                char title[64];
+                const char *tpl = use_gz ? (t->gz_cmd_tpl ? t->gz_cmd_tpl : t->cmd_tpl) : t->cmd_tpl;
+                snprintf(title, sizeof(title), "%.20s", tpl);
+                char *space = strchr(title, ' ');
+                if (space) *space = '\0';
+                if (use_gz) strncat(title, " (GZSET)", sizeof(title) - strlen(title) - 1);
+                else if (config.ds == DS_GZSET) strncat(title, " (GZSET)", sizeof(title) - strlen(title) - 1);
+                benchmark(title, cmd, len);
+                free(cmd);
+            }
         }
 
         if (test_is_selected("lrange") || test_is_selected("lrange_100") || test_is_selected("lrange_300") ||
