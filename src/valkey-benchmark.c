@@ -255,6 +255,8 @@ static void buildCommand(const benchTest *test, int use_gzset, const char *tag, 
         *len_out = redisFormatCommand(cmd_out, tpl, tag, score);
     } else if (!strcmp(test->logical_name, "zpopmin")) {
         *len_out = redisFormatCommand(cmd_out, tpl, tag);
+    } else if (!strncmp(test->logical_name, "zrange", 6)) {
+        *len_out = redisFormatCommand(cmd_out, tpl, tag);
     } else {
         /* Fallback: no parameters */
         *len_out = redisFormatCommand(cmd_out, tpl);
@@ -1923,7 +1925,11 @@ int main(int argc, char **argv) {
     /* Run default benchmark suite. */
     benchTest zset_tests[] = {
         {"zadd", "ZADD myzset%s %s element:__rand_int__", "GZADD myzset%s %s element:__rand_int__"},
-        {"zpopmin", "ZPOPMIN myzset%s", "GZPOPMIN myzset%s"}
+        {"zpopmin", "ZPOPMIN myzset%s", "GZPOPMIN myzset%s"},
+        {"zrange_100", "ZRANGE myzset%s 0 99", "GZRANGE myzset%s 0 99"},
+        {"zrange_300", "ZRANGE myzset%s 0 299", "GZRANGE myzset%s 0 299"},
+        {"zrange_500", "ZRANGE myzset%s 0 499", "GZRANGE myzset%s 0 499"},
+        {"zrange_600", "ZRANGE myzset%s 0 599", "GZRANGE myzset%s 0 599"}
     };
     int zset_tests_count = sizeof(zset_tests) / sizeof(zset_tests[0]);
     int run_modes_arr[2] = {DS_ZSET, DS_GZSET};
@@ -1999,6 +2005,21 @@ int main(int argc, char **argv) {
             len = redisFormatCommand(&cmd, "SPOP myset%s", tag);
             benchmark("SPOP", cmd, len);
             free(cmd);
+        }
+
+        if (test_is_selected("zrange") || test_is_selected("zrange_100") ||
+            test_is_selected("zrange_300") || test_is_selected("zrange_500") ||
+            test_is_selected("zrange_600")) {
+            benchTest prep = {"zadd", "ZADD myzset%s %s element:__rand_int__",
+                               "GZADD myzset%s %s element:__rand_int__"};
+            int modes = (config.ds == DS_BOTH) ? 2 : 1;
+            for (int m = 0; m < modes; ++m) {
+                int use_gz = (config.ds == DS_GZSET) ||
+                             (config.ds == DS_BOTH && run_modes_arr[m] == DS_GZSET);
+                buildCommand(&prep, use_gz, tag, data, &cmd, &len);
+                benchmark("ZADD (needed to benchmark ZRANGE)", cmd, len);
+                free(cmd);
+            }
         }
 
         for (int ti = 0; ti < zset_tests_count; ++ti) {
