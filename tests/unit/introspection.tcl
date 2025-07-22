@@ -19,28 +19,6 @@ start_server {tags {"introspection"}} {
         r client info
     } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|info user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
 
-    proc get_field_in_client_info {info field} {
-        set info [string trim $info]
-        foreach item [split $info " "] {
-            set kv [split $item "="]
-            set k [lindex $kv 0]
-            if {[string match $field $k]} {
-                return [lindex $kv 1]
-            }
-        }
-        return ""
-    }
-
-    proc get_field_in_client_list {id client_list filed} {
-        set list [split $client_list "\r\n"]
-        foreach info $list {
-            if {[string match "id=$id *" $info] } {
-                return [get_field_in_client_info $info $filed]
-            }
-        }
-        return ""
-    }
-
     proc get_client_tot_in_out_cmds {id} {
         set info_list [r client list]
         set in [get_field_in_client_list $id $info_list "tot-net-in"]
