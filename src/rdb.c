@@ -3157,8 +3157,8 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
                 if (server.cluster_enabled) {
                     /* In cluster mode we resize individual slot specific dictionaries based on the number of keys that
                      * slot holds. */
-                    kvstoreDictExpand(db->keys, slot_id, slot_size);
-                    kvstoreDictExpand(db->expires, slot_id, expires_slot_size);
+                    if (slot_size) kvstoreDictExpand(db->keys, slot_id, slot_size);
+                    if (expires_slot_size) kvstoreDictExpand(db->expires, slot_id, expires_slot_size);
                     should_expand_db = 0;
                 }
             } else {

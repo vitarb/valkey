@@ -203,3 +203,20 @@ int test_kvstoreDictIteratorRemoveAllKeysDeleteEmptyDict(int argc, char **argv, 
     kvstoreRelease(kvs2);
     return 0;
 }
+
+int test_kvstoreDictExpand(int argc, char **argv, int flags) {
+    UNUSED(argc);
+    UNUSED(argv);
+    UNUSED(flags);
+
+    kvstore *kvs = kvstoreCreate(&KvstoreDictTestType, 0, KVSTORE_ALLOCATE_DICTS_ON_DEMAND | KVSTORE_FREE_EMPTY_DICTS);
+
+    TEST_ASSERT(kvstoreGetDict(kvs, 0) == NULL);
+    TEST_ASSERT(kvstoreDictExpand(kvs, 0, 10000) == DICT_OK);
+    TEST_ASSERT(kvstoreGetDict(kvs, 0) != NULL);
+    TEST_ASSERT(kvstoreBuckets(kvs) > 0);
+    TEST_ASSERT(kvstoreBuckets(kvs) == kvstoreDictBuckets(kvs, 0));
+
+    kvstoreRelease(kvs);
+    return 0;
+}

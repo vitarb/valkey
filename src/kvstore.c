@@ -425,10 +425,11 @@ int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandS
     if (newsize == 0) return 1;
     for (int i = 0; i < kvs->num_dicts; i++) {
         if (skip_cb && skip_cb(i)) continue;
-        /* If the dictionary doesn't exist, create it */
-        dict *d = createDictIfNeeded(kvs, i);
-        int result = try_expand ? dictTryExpand(d, newsize) : dictExpand(d, newsize);
-        if (try_expand && result == DICT_ERR) return 0;
+        if (try_expand) {
+            if (kvstoreDictTryExpand(kvs, i, newsize) == DICT_ERR) return 0;
+        } else {
+            kvstoreDictExpand(kvs, i, newsize);
+        }
     }
 
     return 1;
@@ -673,6 +674,12 @@ unsigned long kvstoreDictSize(kvstore *kvs, int didx) {
     return dictSize(d);
 }
 
+unsigned long kvstoreDictBuckets(kvstore *kvs, int didx) {
+    dict *d = kvstoreGetDict(kvs, didx);
+    if (!d) return 0;
+    return dictBuckets(d);
+}
+
 kvstoreDictIterator *kvstoreGetDictIterator(kvstore *kvs, int didx) {
     kvstoreDictIterator *kvs_di = zmalloc(sizeof(*kvs_di));
     kvs_di->kvs = kvs;
@@ -729,9 +736,15 @@ unsigned int kvstoreDictGetSomeKeys(kvstore *kvs, int didx, dictEntry **des, uns
 }
 
 int kvstoreDictExpand(kvstore *kvs, int didx, unsigned long size) {
-    dict *d = kvstoreGetDict(kvs, didx);
-    if (!d) return DICT_ERR;
+    if (size == 0) return DICT_ERR;
+    dict *d = createDictIfNeeded(kvs, didx);
     return dictExpand(d, size);
+}
+
+int kvstoreDictTryExpand(kvstore *kvs, int didx, unsigned long size) {
+    if (size == 0) return DICT_ERR;
+    dict *d = createDictIfNeeded(kvs, didx);
+    return dictTryExpand(d, size);
 }
 
 unsigned long kvstoreDictScanDefrag(kvstore *kvs,

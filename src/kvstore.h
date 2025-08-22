@@ -56,6 +56,7 @@ unsigned long kvstoreDictRehashingCount(kvstore *kvs);
 
 /* Specific dict access by dict-index */
 unsigned long kvstoreDictSize(kvstore *kvs, int didx);
+unsigned long kvstoreDictBuckets(kvstore *kvs, int didx);
 kvstoreDictIterator *kvstoreGetDictIterator(kvstore *kvs, int didx);
 kvstoreDictIterator *kvstoreGetDictSafeIterator(kvstore *kvs, int didx);
 void kvstoreReleaseDictIterator(kvstoreDictIterator *kvs_id);
@@ -64,6 +65,7 @@ dictEntry *kvstoreDictGetRandomKey(kvstore *kvs, int didx);
 dictEntry *kvstoreDictGetFairRandomKey(kvstore *kvs, int didx);
 unsigned int kvstoreDictGetSomeKeys(kvstore *kvs, int didx, dictEntry **des, unsigned int count);
 int kvstoreDictExpand(kvstore *kvs, int didx, unsigned long size);
+int kvstoreDictTryExpand(kvstore *kvs, int didx, unsigned long size);
 unsigned long kvstoreDictScanDefrag(kvstore *kvs,
                                     int didx,
                                     unsigned long v,
