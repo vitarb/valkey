@@ -50,6 +50,192 @@ static int objectIsExpired(robj *val);
 static void dbSetValue(serverDb *db, robj *key, robj **valref, int overwrite, void **oldref);
 static robj *dbFindWithDictIndex(serverDb *db, sds key, int dict_index);
 
+typedef struct keyMemoryDeltaSnapshot {
+    sds key;
+    robj *final_value;
+    size_t old_bytes;
+    int dbid;
+    int old_exists;
+    int heap_owned;
+} keyMemoryDeltaSnapshot;
+
+static dict *keyMemoryDeltaPending;
+static keyMemoryDeltaSnapshot *keyMemoryDeltaSingle;
+static keyMemoryDeltaSnapshot keyMemoryDeltaSingleStorage;
+static int keyMemoryDeltaSingleStorageBusy;
+
+static uint64_t keyMemoryDeltaHash(const void *key) {
+    const keyMemoryDeltaSnapshot *snapshot = key;
+    uint64_t hash = dictSdsHash(snapshot->key);
+    return hash ^ ((uint64_t)(uint32_t)snapshot->dbid * UINT64_C(0x9e3779b97f4a7c15));
+}
+
+static int keyMemoryDeltaCompare(const void *key1, const void *key2) {
+    const keyMemoryDeltaSnapshot *snapshot1 = key1;
+    const keyMemoryDeltaSnapshot *snapshot2 = key2;
+    return snapshot1->dbid == snapshot2->dbid && dictSdsKeyCompare(snapshot1->key, snapshot2->key);
+}
+
+static void keyMemoryDeltaSnapshotFree(keyMemoryDeltaSnapshot *snapshot) {
+    serverAssert(snapshot->heap_owned);
+    sdsfree(snapshot->key);
+    zfree(snapshot);
+}
+
+static keyMemoryDeltaSnapshot *keyMemoryDeltaSnapshotCreate(serverDb *db, robj *key, robj *value, int use_storage) {
+    keyMemoryDeltaSnapshot *snapshot;
+    sds keystr = objectGetVal(key);
+    if (use_storage) {
+        snapshot = &keyMemoryDeltaSingleStorage;
+        if (snapshot->key)
+            snapshot->key = sdscpylen(snapshot->key, keystr, sdslen(keystr));
+        else
+            snapshot->key = sdsdup(keystr);
+        snapshot->heap_owned = 0;
+    } else {
+        snapshot = zmalloc(sizeof(*snapshot));
+        snapshot->key = sdsdup(keystr);
+        snapshot->heap_owned = 1;
+    }
+    snapshot->dbid = db->id;
+    snapshot->final_value = value;
+    snapshot->old_exists = value != NULL;
+    snapshot->old_bytes = value ? objectComputeSizeForDelta(key, value, db->id) : 0;
+    return snapshot;
+}
+
+/* Record the value left in the keyspace by a mutation primitive. This avoids
+ * hashing and looking the key up again at the end of the execution unit. */
+static void keyMemoryDeltaSetFinalValue(serverDb *db, robj *key, robj *value) {
+    if (!keyMemoryDeltaSingle && !keyMemoryDeltaPending) return;
+
+    keyMemoryDeltaSnapshot lookup = {.key = objectGetVal(key), .dbid = db->id};
+    keyMemoryDeltaSnapshot *snapshot = NULL;
+    if (keyMemoryDeltaSingle) {
+        if (keyMemoryDeltaCompare(keyMemoryDeltaSingle, &lookup)) snapshot = keyMemoryDeltaSingle;
+    } else {
+        dictEntry *de = dictFind(keyMemoryDeltaPending, &lookup);
+        if (de) snapshot = dictGetKey(de);
+    }
+    if (snapshot) snapshot->final_value = value;
+}
+
+static keyMemoryDeltaSnapshot *keyMemoryDeltaSnapshotClone(const keyMemoryDeltaSnapshot *source) {
+    keyMemoryDeltaSnapshot *snapshot = zmalloc(sizeof(*snapshot));
+    *snapshot = *source;
+    snapshot->key = sdsdup(source->key);
+    snapshot->heap_owned = 1;
+    return snapshot;
+}
+
+static void keyMemoryDeltaSnapshotDestructor(void *key) {
+    keyMemoryDeltaSnapshotFree(key);
+}
+
+static dictType keyMemoryDeltaDictType = {
+    .hashFunction = keyMemoryDeltaHash,
+    .keyCompare = keyMemoryDeltaCompare,
+    .keyDestructor = keyMemoryDeltaSnapshotDestructor,
+};
+
+/* Capture the first state observed for a key in the current execution unit.
+ * The common single-key case reuses one bounded buffer. A transient dictionary
+ * is allocated only when an execution unit touches multiple keys. */
+static void keyMemoryDeltaTrack(serverDb *db, robj *key, robj *value) {
+    sds keystr = objectGetVal(key);
+    keyMemoryDeltaSnapshot lookup = {.key = keystr, .dbid = db->id};
+    if (keyMemoryDeltaSingle) {
+        if (keyMemoryDeltaCompare(keyMemoryDeltaSingle, &lookup)) return;
+        keyMemoryDeltaPending = dictCreate(&keyMemoryDeltaDictType);
+        keyMemoryDeltaSnapshot *first = keyMemoryDeltaSingle;
+        if (!first->heap_owned) first = keyMemoryDeltaSnapshotClone(first);
+        int added = dictAdd(keyMemoryDeltaPending, first, NULL);
+        serverAssert(added == DICT_OK);
+        keyMemoryDeltaSingle = NULL;
+    }
+    if (keyMemoryDeltaPending && dictFind(keyMemoryDeltaPending, &lookup)) return;
+
+    int use_storage = !keyMemoryDeltaPending && !keyMemoryDeltaSingleStorageBusy;
+    keyMemoryDeltaSnapshot *snapshot = keyMemoryDeltaSnapshotCreate(db, key, value, use_storage);
+    if (keyMemoryDeltaPending) {
+        int added = dictAdd(keyMemoryDeltaPending, snapshot, NULL);
+        serverAssert(added == DICT_OK);
+    } else {
+        keyMemoryDeltaSingle = snapshot;
+    }
+}
+
+/* Reads can advance an aggregate value's incremental rehash and eventually
+ * release its old table. Capture only that uncommon case; ordinary reads stay
+ * on the subscriber-check fast path. */
+static int keyMemoryDeltaObjectMayRehashOnRead(robj *value) {
+    hashtable *ht = NULL;
+    if (value->encoding == OBJ_ENCODING_HASHTABLE && (value->type == OBJ_SET || value->type == OBJ_HASH)) {
+        ht = objectGetVal(value);
+    } else if (value->type == OBJ_ZSET && value->encoding == OBJ_ENCODING_SKIPLIST) {
+        zset *zs = objectGetVal(value);
+        ht = zs->ht;
+    }
+    return ht && hashtableIsRehashing(ht);
+}
+
+static void keyMemoryDeltaNotifySnapshot(keyMemoryDeltaSnapshot *snapshot) {
+    serverAssert(snapshot->dbid >= 0 && snapshot->dbid < server.dbnum);
+    serverDb *db = server.db[snapshot->dbid];
+    robj *value = snapshot->final_value;
+    debugServerAssert(dbFind(db, snapshot->key) == value);
+    int new_exists = value != NULL;
+    size_t new_bytes = 0;
+    robj keyobj;
+    initStaticStringObject(keyobj, snapshot->key);
+    if (value) new_bytes = objectComputeSizeForDelta(&keyobj, value, snapshot->dbid);
+
+    if (snapshot->old_exists != new_exists || snapshot->old_bytes != new_bytes) {
+        moduleNotifyKeyMemoryDelta(snapshot->dbid, &keyobj, snapshot->old_exists, snapshot->old_bytes, new_exists,
+                                   new_bytes);
+    }
+}
+
+void keyMemoryDeltaPostExecutionUnit(void) {
+    if (!keyMemoryDeltaSingle && !keyMemoryDeltaPending) return;
+
+    /* Detach before firing callbacks. A callback that writes keys starts a new
+     * accounting unit instead of mutating the collection being processed. */
+    keyMemoryDeltaSnapshot *single = keyMemoryDeltaSingle;
+    dict *pending = keyMemoryDeltaPending;
+    keyMemoryDeltaSingle = NULL;
+    keyMemoryDeltaPending = NULL;
+
+    if (single) {
+        if (!single->heap_owned) keyMemoryDeltaSingleStorageBusy = 1;
+        if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaNotifySnapshot(single);
+        if (single->heap_owned) {
+            keyMemoryDeltaSnapshotFree(single);
+        } else {
+            keyMemoryDeltaSingleStorageBusy = 0;
+            if (sdsalloc(single->key) > 1024) {
+                sdsfree(single->key);
+                single->key = NULL;
+            }
+        }
+    } else if (moduleHasKeyMemoryDeltaSubscribers()) {
+        dictIterator *iter = dictGetIterator(pending);
+        dictEntry *de;
+        while ((de = dictNext(iter)) != NULL) keyMemoryDeltaNotifySnapshot(dictGetKey(de));
+        dictReleaseIterator(iter);
+    }
+    if (pending) {
+        serverAssert(single == NULL);
+        dictRelease(pending);
+    }
+}
+
+void keyMemoryDeltaNotifyLoaded(serverDb *db, robj *key, robj *value) {
+    if (!moduleHasKeyMemoryDeltaSubscribers()) return;
+    size_t bytes = objectComputeSizeForDelta(key, value, db->id);
+    moduleNotifyKeyMemoryDelta(db->id, key, 0, 0, 1, bytes);
+}
+
 
 /* Lookup a key for read or write operations, or return NULL if the key is not
  * found in the specified DB. This function implements the functionality of
@@ -136,7 +322,11 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
  * the key. */
 robj *lookupKeyReadWithFlags(serverDb *db, robj *key, int flags) {
     serverAssert(!(flags & LOOKUP_WRITE));
-    return lookupKey(db, key, flags);
+    robj *value = lookupKey(db, key, flags);
+    if (value && moduleHasKeyMemoryDeltaSubscribers() && keyMemoryDeltaObjectMayRehashOnRead(value)) {
+        keyMemoryDeltaTrack(db, key, value);
+    }
+    return value;
 }
 
 /* Like lookupKeyReadWithFlags(), but does not use any flag, which is the
@@ -152,7 +342,9 @@ robj *lookupKeyRead(serverDb *db, robj *key) {
  * Returns the linked value object if the key exists or NULL if the key
  * does not exist in the specified DB. */
 robj *lookupKeyWriteWithFlags(serverDb *db, robj *key, int flags) {
-    return lookupKey(db, key, flags | LOOKUP_WRITE);
+    robj *value = lookupKey(db, key, flags | LOOKUP_WRITE);
+    if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaTrack(db, key, value);
+    return value;
 }
 
 robj *lookupKeyWrite(serverDb *db, robj *key) {
@@ -212,6 +404,8 @@ static void dbAddInternal(serverDb *db, robj *key, robj **valref, int update_if_
         debugServerAssertWithInfo(NULL, key, kvstoreHashtableFindRef(db->keys, dict_index, objectGetVal(key)) == NULL);
     }
 
+    if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaTrack(db, key, NULL);
+
     /* Not existing. Convert val to valkey object and insert. */
     robj *val = *valref;
     val = objectSetKeyAndExpire(val, objectGetVal(key), -1);
@@ -223,6 +417,7 @@ static void dbAddInternal(serverDb *db, robj *key, robj **valref, int update_if_
     signalKeyAsReady(db, key, val->type);
     notifyKeyspaceEvent(NOTIFY_NEW, "new", key, db->id);
     *valref = val;
+    if (keyMemoryDeltaSingle || keyMemoryDeltaPending) keyMemoryDeltaSetFinalValue(db, key, val);
 }
 
 void dbAdd(serverDb *db, robj *key, robj **valref) {
@@ -326,6 +521,8 @@ static void dbSetValue(serverDb *db, robj *key, robj **valref, int overwrite, vo
     robj *old = *oldref;
     robj *new;
 
+    if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaTrack(db, key, old);
+
     if (overwrite) {
         /* VM_StringDMA may call dbUnshareStringValue which may free val, so we
          * need to incr to retain old */
@@ -391,6 +588,7 @@ static void dbSetValue(serverDb *db, robj *key, robj **valref, int overwrite, vo
         decrRefCount(old);
     }
     *valref = new;
+    if (keyMemoryDeltaSingle || keyMemoryDeltaPending) keyMemoryDeltaSetFinalValue(db, key, new);
 }
 
 /* Replace an existing key with a new value, we just replace value and don't
@@ -477,6 +675,7 @@ int dbGenericDeleteWithDictIndex(serverDb *db, robj *key, int async, int flags, 
     void **ref = kvstoreHashtableTwoPhasePopFindRef(db->keys, dict_index, objectGetVal(key), &pos);
     if (ref != NULL) {
         robj *val = *ref;
+        if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaTrack(db, key, val);
         /* VM_StringDMA may call dbUnshareStringValue which may free val, so we
          * need to incr to retain val */
         incrRefCount(val);
@@ -492,6 +691,7 @@ int dbGenericDeleteWithDictIndex(serverDb *db, robj *key, int async, int flags, 
         /* Delete from keys and expires tables. This will not free the object.
          * (The expires table has no destructor callback.) */
         kvstoreHashtableTwoPhasePopDelete(db->keys, dict_index, &pos);
+        if (keyMemoryDeltaSingle || keyMemoryDeltaPending) keyMemoryDeltaSetFinalValue(db, key, NULL);
         if (objectGetExpire(val) != -1) {
             bool deleted = kvstoreHashtableDelete(db->expires, dict_index, objectGetVal(key));
             serverAssert(deleted);
@@ -1929,6 +2129,7 @@ robj *setExpire(client *c, serverDb *db, robj *key, long long when) {
 
     int writable_replica = server.primary_host && server.repl_replica_ro == 0;
     if (c && writable_replica && !c->flag.primary) rememberReplicaKeyWithExpire(db, key);
+    if (keyMemoryDeltaSingle || keyMemoryDeltaPending) keyMemoryDeltaSetFinalValue(db, key, val);
     return val;
 }
 
@@ -2062,6 +2263,10 @@ size_t dbReclaimExpiredFields(robj *o, serverDb *db, mstime_t now, unsigned long
     bool deleteKey = false;
 
     while (max_entries > 0) {
+        robj tracked_key;
+        initStaticStringObject(tracked_key, objectGetKey(o));
+        if (moduleHasKeyMemoryDeltaSubscribers()) keyMemoryDeltaTrack(db, &tracked_key, o);
+
         /* Process in batches to avoid large stack allocations. */
         unsigned long batch_size = max_entries > EXPIRE_BULK_LIMIT ? EXPIRE_BULK_LIMIT : max_entries;
         robj *entries[EXPIRE_BULK_LIMIT];

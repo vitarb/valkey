@@ -419,6 +419,7 @@ typedef struct ValkeyModuleEventListener {
 } ValkeyModuleEventListener;
 
 list *ValkeyModule_EventListeners;                /* Global list of all the active events. */
+uint32_t moduleKeyMemoryDeltaListenerCount;       /* Count of modules listening for key memory deltas. */
 static int commandResultSuccessListeners = 0;     /* Count of modules listening for command result success. */
 static int commandResultFailureListeners = 0;     /* Count of modules listening for command result failure. */
 static int commandResultRejectedListeners = 0;    /* Count of modules listening for command result rejected. */
@@ -12275,6 +12276,7 @@ static uint64_t moduleEventVersions[] = {
     VALKEYMODULE_COMMANDRESULTINFO_VERSION,        /* VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE */
     VALKEYMODULE_COMMANDRESULTINFO_VERSION,        /* VALKEYMODULE_EVENT_COMMAND_RESULT_REJECTED */
     VALKEYMODULE_COMMANDRESULTINFO_VERSION,        /* VALKEYMODULE_EVENT_COMMAND_RESULT_ACL_REJECTED */
+    VALKEYMODULE_KEY_MEMORY_DELTA_VERSION,         /* VALKEYMODULE_EVENT_KEY_MEMORY_DELTA */
 };
 
 /* Register to be notified, via a callback, when the specified server event
@@ -12689,6 +12691,16 @@ static uint64_t moduleEventVersions[] = {
  *         the denied key or channel name from argv
  *       - All other ACL subevents: NULL
  *
+ * * ValkeyModuleEvent_KeyMemoryDelta
+ *
+ *     Called after an execution unit changes the sampled memory usage or existence
+ *     of a key. Repeated mutations of the same key inside one execution unit are
+ *     coalesced. The estimate uses the same default sampling count as MEMORY USAGE.
+ *     FLUSHDB, FLUSHALL and SWAPDB are represented by their existing server events.
+ *
+ *     The data pointer can be cast to ValkeyModuleKeyMemoryDelta. The key string is
+ *     borrowed and is valid only for the duration of the callback.
+ *
  * The function returns VALKEYMODULE_OK if the module was successfully subscribed
  * for the specified event. If the API is called from a wrong context or unsupported event
  * is given then VALKEYMODULE_ERR is returned. */
@@ -12715,6 +12727,10 @@ int VM_SubscribeToServerEvent(ValkeyModuleCtx *ctx, ValkeyModuleEvent event, Val
         if (callback == NULL) {
             listDelNode(ValkeyModule_EventListeners, ln);
             zfree(el);
+            if (event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) {
+                serverAssert(moduleKeyMemoryDeltaListenerCount > 0);
+                moduleKeyMemoryDeltaListenerCount--;
+            }
             if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
                 commandResultSuccessListeners--;
             else if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)
@@ -12737,6 +12753,7 @@ int VM_SubscribeToServerEvent(ValkeyModuleCtx *ctx, ValkeyModuleEvent event, Val
     el->event = event;
     el->callback = callback;
     listAddNodeTail(ValkeyModule_EventListeners, el);
+    if (event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) moduleKeyMemoryDeltaListenerCount++;
     if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
         commandResultSuccessListeners++;
     else if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)
@@ -12775,6 +12792,7 @@ int VM_IsSubEventSupported(ValkeyModuleEvent event, int64_t subevent) {
         return subevent == 0;
     case VALKEYMODULE_EVENT_COMMAND_RESULT_ACL_REJECTED:
         return subevent < 5; /* ValkeyModuleACLLogEntryReason has 5 values (0-4) */
+    case VALKEYMODULE_EVENT_KEY_MEMORY_DELTA: return subevent < _VALKEYMODULE_SUBEVENT_KEY_MEMORY_DELTA_NEXT;
     default: break;
     }
     return 0;
@@ -12869,6 +12887,10 @@ void moduleFireServerEvent(uint64_t eid, int subid, void *data) {
                        eid == VALKEYMODULE_EVENT_COMMAND_RESULT_REJECTED ||
                        eid == VALKEYMODULE_EVENT_COMMAND_RESULT_ACL_REJECTED) {
                 moduledata = data;
+            } else if (eid == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) {
+                ValkeyModuleKeyMemoryDelta *info = data;
+                selectDb(ctx.client, info->dbnum);
+                moduledata = data;
             }
 
             el->module->in_hook++;
@@ -12895,6 +12917,10 @@ void moduleUnsubscribeAllServerEvents(ValkeyModule *module) {
     while ((ln = listNext(&li))) {
         el = ln->value;
         if (el->module == module) {
+            if (el->event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) {
+                serverAssert(moduleKeyMemoryDeltaListenerCount > 0);
+                moduleKeyMemoryDeltaListenerCount--;
+            }
             if (el->event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
                 commandResultSuccessListeners--;
             else if (el->event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)
@@ -12907,6 +12933,24 @@ void moduleUnsubscribeAllServerEvents(ValkeyModule *module) {
             zfree(el);
         }
     }
+}
+
+void moduleNotifyKeyMemoryDelta(int dbid,
+                                robj *key,
+                                int old_exists,
+                                size_t old_bytes,
+                                int new_exists,
+                                size_t new_bytes) {
+    ValkeyModuleKeyMemoryDelta info = {
+        .version = VALKEYMODULE_KEY_MEMORY_DELTA_VERSION,
+        .key = key,
+        .old_bytes = old_bytes,
+        .new_bytes = new_bytes,
+        .dbnum = dbid,
+        .old_exists = old_exists,
+        .new_exists = new_exists,
+    };
+    moduleFireServerEvent(VALKEYMODULE_EVENT_KEY_MEMORY_DELTA, 0, &info);
 }
 
 void processModuleLoadingProgressEvent(int is_aof) {
