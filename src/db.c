@@ -101,7 +101,7 @@ static keyMemoryDeltaSnapshot *keyMemoryDeltaSnapshotCreate(serverDb *db, robj *
     snapshot->dbid = db->id;
     snapshot->final_value = value;
     snapshot->old_exists = value != NULL;
-    snapshot->old_bytes = value ? objectComputeSizeForDelta(key, value, OBJ_COMPUTE_SIZE_DEF_SAMPLES, db->id) : 0;
+    snapshot->old_bytes = value ? objectComputeSizeForDelta(key, value, db->id) : 0;
     return snapshot;
 }
 
@@ -194,7 +194,7 @@ static void keyMemoryDeltaNotifySnapshot(keyMemoryDeltaSnapshot *snapshot) {
     size_t new_bytes = 0;
     robj keyobj;
     initStaticStringObject(keyobj, snapshot->key);
-    if (value) new_bytes = objectComputeSizeForDelta(&keyobj, value, OBJ_COMPUTE_SIZE_DEF_SAMPLES, snapshot->dbid);
+    if (value) new_bytes = objectComputeSizeForDelta(&keyobj, value, snapshot->dbid);
 
     if (snapshot->old_exists != new_exists || snapshot->old_bytes != new_bytes) {
         moduleNotifyKeyMemoryDelta(snapshot->dbid, &keyobj, snapshot->old_exists, snapshot->old_bytes, new_exists,
@@ -238,7 +238,7 @@ void keyMemoryDeltaPostExecutionUnit(void) {
 
 void keyMemoryDeltaNotifyLoaded(serverDb *db, robj *key, robj *value) {
     if (!moduleHasKeyMemoryDeltaSubscribers()) return;
-    size_t bytes = objectComputeSizeForDelta(key, value, OBJ_COMPUTE_SIZE_DEF_SAMPLES, db->id);
+    size_t bytes = objectComputeSizeForDelta(key, value, db->id);
     moduleNotifyKeyMemoryDelta(db->id, key, 0, 0, 1, bytes);
 }
 

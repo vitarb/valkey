@@ -420,12 +420,12 @@ typedef struct ValkeyModuleEventListener {
     ValkeyModuleEventCallback callback;
 } ValkeyModuleEventListener;
 
-list *ValkeyModule_EventListeners;                            /* Global list of all the active events. */
-uint32_t moduleEventListenerCounts[_VALKEYMODULE_EVENT_NEXT]; /* Listener count by event ID. */
-static int commandResultSuccessListeners = 0;                 /* Count of modules listening for command result success. */
-static int commandResultFailureListeners = 0;                 /* Count of modules listening for command result failure. */
-static int commandResultRejectedListeners = 0;                /* Count of modules listening for command result rejected. */
-static int commandResultACLRejectedListeners = 0;             /* Count of modules listening for command result ACL rejected. */
+list *ValkeyModule_EventListeners;                /* Global list of all the active events. */
+uint32_t moduleKeyMemoryDeltaListenerCount;       /* Count of modules listening for key memory deltas. */
+static int commandResultSuccessListeners = 0;     /* Count of modules listening for command result success. */
+static int commandResultFailureListeners = 0;     /* Count of modules listening for command result failure. */
+static int commandResultRejectedListeners = 0;    /* Count of modules listening for command result rejected. */
+static int commandResultACLRejectedListeners = 0; /* Count of modules listening for command result ACL rejected. */
 
 /* Data structures related to the module users */
 
@@ -12780,8 +12780,10 @@ int VM_SubscribeToServerEvent(ValkeyModuleCtx *ctx, ValkeyModuleEvent event, Val
         if (callback == NULL) {
             listDelNode(ValkeyModule_EventListeners, ln);
             zfree(el);
-            serverAssert(moduleEventListenerCounts[event.id] > 0);
-            moduleEventListenerCounts[event.id]--;
+            if (event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) {
+                serverAssert(moduleKeyMemoryDeltaListenerCount > 0);
+                moduleKeyMemoryDeltaListenerCount--;
+            }
             if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
                 commandResultSuccessListeners--;
             else if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)
@@ -12804,7 +12806,7 @@ int VM_SubscribeToServerEvent(ValkeyModuleCtx *ctx, ValkeyModuleEvent event, Val
     el->event = event;
     el->callback = callback;
     listAddNodeTail(ValkeyModule_EventListeners, el);
-    moduleEventListenerCounts[event.id]++;
+    if (event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) moduleKeyMemoryDeltaListenerCount++;
     if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
         commandResultSuccessListeners++;
     else if (event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)
@@ -12867,7 +12869,7 @@ void moduleFireServerEvent(uint64_t eid, int subid, void *data) {
     /* Fast path to return ASAP if there is nothing to do, avoiding to
      * set up the iterator and so forth: we want this call to be extremely
      * cheap if there are no registered modules. */
-    if (eid >= _VALKEYMODULE_EVENT_NEXT || moduleEventListenerCounts[eid] == 0) return;
+    if (listLength(ValkeyModule_EventListeners) == 0) return;
 
     listIter li;
     listNode *ln;
@@ -12968,8 +12970,10 @@ void moduleUnsubscribeAllServerEvents(ValkeyModule *module) {
     while ((ln = listNext(&li))) {
         el = ln->value;
         if (el->module == module) {
-            serverAssert(moduleEventListenerCounts[el->event.id] > 0);
-            moduleEventListenerCounts[el->event.id]--;
+            if (el->event.id == VALKEYMODULE_EVENT_KEY_MEMORY_DELTA) {
+                serverAssert(moduleKeyMemoryDeltaListenerCount > 0);
+                moduleKeyMemoryDeltaListenerCount--;
+            }
             if (el->event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_SUCCESS)
                 commandResultSuccessListeners--;
             else if (el->event.id == VALKEYMODULE_EVENT_COMMAND_RESULT_FAILURE)

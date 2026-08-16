@@ -3180,9 +3180,8 @@ robj *createZsetObject(void);
 robj *createZsetListpackObject(void);
 robj *createStreamObject(void);
 robj *createModuleObject(moduleType *mt, void *value);
-#define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5
 size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid);
-size_t objectComputeSizeForDelta(robj *key, robj *o, size_t sample_size, int dbid);
+size_t objectComputeSizeForDelta(robj *key, robj *o, int dbid);
 int getLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg);
 int getPositiveLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg);
 int getRangeLongFromObjectOrReply(client *c, robj *o, long min, long max, long *target, const char *msg);

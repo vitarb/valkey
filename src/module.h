@@ -230,9 +230,9 @@ int moduleAllModulesHandleReplAsyncLoad(void);
 int moduleVerifyAllAllowAtomicSlotMigrationOrReply(client *c);
 sds modulesCollectInfo(sds info, dict *sections_dict, int for_crash_report, int sections);
 void moduleFireServerEvent(uint64_t eid, int subid, void *data);
-extern uint32_t moduleEventListenerCounts[];
+extern uint32_t moduleKeyMemoryDeltaListenerCount;
 static inline int moduleHasKeyMemoryDeltaSubscribers(void) {
-    return moduleEventListenerCounts[VALKEYMODULE_EVENT_KEY_MEMORY_DELTA] != 0;
+    return moduleKeyMemoryDeltaListenerCount != 0;
 }
 void moduleNotifyKeyMemoryDelta(int dbid,
                                 robj *key,

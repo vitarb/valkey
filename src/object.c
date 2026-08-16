@@ -42,6 +42,8 @@
 #include <math.h>
 #include <ctype.h>
 
+#define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5
+
 #ifdef __CYGWIN__
 #define strtold(a, b) ((long double)strtod((a), (b)))
 #endif
@@ -1403,8 +1405,8 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
 
 /* Keep the common string accounting path small enough to inline into callers.
  * Other types retain the full sampled MEMORY USAGE implementation above. */
-size_t objectComputeSizeForDelta(robj *key, robj *o, size_t sample_size, int dbid) {
-    if (objectGetType(o) != OBJ_STRING) return objectComputeSize(key, o, sample_size, dbid);
+size_t objectComputeSizeForDelta(robj *key, robj *o, int dbid) {
+    if (objectGetType(o) != OBJ_STRING) return objectComputeSize(key, o, OBJ_COMPUTE_SIZE_DEF_SAMPLES, dbid);
 
     size_t size = objectAllocSize(o);
     if (objectGetEncoding(o) == OBJ_ENCODING_RAW) {

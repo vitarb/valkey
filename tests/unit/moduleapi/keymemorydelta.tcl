@@ -110,4 +110,17 @@ end)}
         assert_equal [memory_sum [r keys *]] [lindex [r keymemorydelta.usage] 0]
         assert_equal [r dbsize] [lindex [r keymemorydelta.usage] 1]
     }
+
+    test {key memory delta is finalized during AOF loading} {
+        r config set appendonly yes
+        r config set auto-aof-rewrite-percentage 0
+        waitForBgrewriteaof r
+        r set aof-delta one
+        r append aof-delta two
+        assert_equal OK [r keymemorydelta.reset]
+        r debug loadaof
+        assert_morethan [r keymemorydelta.loading_events] 0
+        assert_equal [memory_sum [r keys *]] [lindex [r keymemorydelta.usage] 0]
+        assert_equal [r dbsize] [lindex [r keymemorydelta.usage] 1]
+    }
 }

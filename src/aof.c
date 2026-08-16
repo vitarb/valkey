@@ -1687,6 +1687,7 @@ int loadSingleAppendOnlyFile(char *filename) {
         } else {
             cmd->proc(fakeClient);
         }
+        keyMemoryDeltaPostExecutionUnit();
 
         /* The fake client should not have a reply */
         serverAssert(fakeClient->bufpos == 0 && listLength(fakeClient->reply) == 0);
