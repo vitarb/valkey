@@ -1659,7 +1659,7 @@ void hgetexCommand(client *c) {
         return;
     }
 
-    o = lookupKeyRead(c->db, c->argv[1]);
+    o = lookupKeyWrite(c->db, c->argv[1]);
 
     if (checkType(c, o, OBJ_HASH)) return;
 

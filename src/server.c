@@ -3830,6 +3830,7 @@ void postExecutionUnitOperations(void) {
     if (server.execution_nesting) return;
 
     firePostExecutionUnitJobs();
+    keyMemoryDeltaPostExecutionUnit();
 
     /* If we are at the top-most call() and not inside an active module
      * context (e.g. within a module timer) we can propagate what we accumulated. */

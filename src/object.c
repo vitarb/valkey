@@ -1212,15 +1212,24 @@ char *strEncoding(int encoding) {
 
 /* =========================== Memory introspection ========================= */
 
+/* Embedded values consume the rest of their object's allocation, and their
+ * SDS allocation field records that exact usable length. Avoid asking the
+ * allocator to rediscover information already stored in the object. */
+static size_t objectAllocSize(robj *o) {
+    if (o->hasembval) {
+        sds value = objectGetVal(o);
+        return (size_t)((char *)value - (char *)o) + sdsalloc(value) + 1;
+    }
+    return zmalloc_size((void *)o);
+}
 
 /* Returns the size in bytes consumed by the key's value in RAM.
  * Note that the returned value is just an approximation, especially in the
  * case of aggregated data types where only "sample_size" elements
  * are checked and averaged to estimate the total size. */
-#define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5 /* Default sample size. */
 size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
     size_t elesize = 0, samples = 0;
-    size_t asize = zmalloc_size((void *)o);
+    size_t asize = objectAllocSize(o);
 
     if (objectGetType(o) == OBJ_STRING) {
         if (objectGetEncoding(o) == OBJ_ENCODING_RAW) {
@@ -1293,6 +1302,11 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             hashtable *ht = objectGetVal(o);
             hashtableIterator iter;
             vset *volatile_fields = hashtableMetadata(ht);
+            /* Memory introspection must include fields that are logically
+             * expired but have not been reclaimed yet. Otherwise the reported
+             * allocation changes merely because time passes, with no mutation
+             * at which a memory delta can be observed. */
+            hashtableType *original_type = hashtableSetType(ht, &hashHashtableType);
             hashtableInitIterator(&iter, ht, 0);
             void *next;
 
@@ -1304,6 +1318,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             hashtableCleanupIterator(&iter);
             if (samples) asize += (double)elesize / samples * hashtableSize(ht);
             if (vsetIsValid(volatile_fields)) asize += vsetMemUsage(volatile_fields);
+            hashtableSetType(ht, original_type);
         } else {
             serverPanic("Unknown hash encoding");
         }
@@ -1384,6 +1399,20 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
         serverPanic("Unknown object type");
     }
     return asize;
+}
+
+/* Keep the common string accounting path small enough to inline into callers.
+ * Other types retain the full sampled MEMORY USAGE implementation above. */
+size_t objectComputeSizeForDelta(robj *key, robj *o, size_t sample_size, int dbid) {
+    if (objectGetType(o) != OBJ_STRING) return objectComputeSize(key, o, sample_size, dbid);
+
+    size_t size = objectAllocSize(o);
+    if (objectGetEncoding(o) == OBJ_ENCODING_RAW) {
+        size += sdsAllocSize(objectGetVal(o));
+    } else if (objectGetEncoding(o) != OBJ_ENCODING_INT && objectGetEncoding(o) != OBJ_ENCODING_EMBSTR) {
+        serverPanic("Unknown string encoding");
+    }
+    return size;
 }
 
 /* Release data obtained with getMemoryOverheadData(). */

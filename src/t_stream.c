@@ -2307,7 +2307,7 @@ void xreadCommand(client *c) {
          * starting from now. */
         int id_idx = i - streams_arg - streams_count;
         robj *key = c->argv[i - streams_count];
-        robj *o = lookupKeyRead(c->db, key);
+        robj *o = xreadgroup ? lookupKeyWrite(c->db, key) : lookupKeyRead(c->db, key);
         if (checkType(c, o, OBJ_STREAM)) goto cleanup;
         streamCG *group = NULL;
 
@@ -2385,7 +2385,8 @@ void xreadCommand(client *c) {
     size_t arraylen = 0;
     void *arraylen_ptr = NULL;
     for (int i = 0; i < streams_count; i++) {
-        robj *o = lookupKeyRead(c->db, c->argv[streams_arg + i]);
+        robj *o = xreadgroup ? lookupKeyWrite(c->db, c->argv[streams_arg + i])
+                             : lookupKeyRead(c->db, c->argv[streams_arg + i]);
         if (o == NULL) continue;
         stream *s = objectGetVal(o);
         streamID *gt = ids + i; /* ID must be greater than this. */
@@ -2872,7 +2873,7 @@ void xsetidCommand(client *c) {
  */
 void xackCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db, c->argv[1]);
+    robj *o = lookupKeyWrite(c->db, c->argv[1]);
     if (o) {
         if (checkType(c, o, OBJ_STREAM)) return; /* Type error. */
         group = streamLookupCG(objectGetVal(o), objectGetVal(c->argv[2]));
@@ -3165,7 +3166,7 @@ void xpendingCommand(client *c) {
  * what messages it is now in charge of. */
 void xclaimCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db, c->argv[1]);
+    robj *o = lookupKeyWrite(c->db, c->argv[1]);
     long long minidle;          /* Minimum idle time argument. */
     long long retrycount = -1;  /* -1 means RETRYCOUNT option not given. */
     mstime_t deliverytime = -1; /* -1 means IDLE/TIME options not given. */
@@ -3385,7 +3386,7 @@ cleanup:
  * what messages it is now in charge of. */
 void xautoclaimCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db, c->argv[1]);
+    robj *o = lookupKeyWrite(c->db, c->argv[1]);
     long long minidle; /* Minimum idle time argument, in milliseconds. */
     long count = 100;  /* Maximum entries to claim. */
     const unsigned attempts_factor = 10;

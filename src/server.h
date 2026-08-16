@@ -3180,6 +3180,9 @@ robj *createZsetObject(void);
 robj *createZsetListpackObject(void);
 robj *createStreamObject(void);
 robj *createModuleObject(moduleType *mt, void *value);
+#define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5
+size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid);
+size_t objectComputeSizeForDelta(robj *key, robj *o, size_t sample_size, int dbid);
 int getLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg);
 int getPositiveLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg);
 int getRangeLongFromObjectOrReply(client *c, robj *o, long min, long max, long *target, const char *msg);
@@ -3805,6 +3808,8 @@ void discardTempDb(serverDb **tempDb);
 int selectDb(client *c, int id);
 void signalModifiedKey(client *c, serverDb *db, robj *key);
 void signalFlushedDb(int dbid, int async);
+void keyMemoryDeltaPostExecutionUnit(void);
+void keyMemoryDeltaNotifyLoaded(serverDb *db, robj *key, robj *value);
 int parseScanOptionsOrReply(client *c, robj *o, int start_idx, bool allow_slot, scanOptions *opts);
 void scanGenericCommand(client *c, robj *o, unsigned long long cursor);
 void scanGenericCommandWithOptions(client *c, robj *o, unsigned long long cursor, const scanOptions *opts, const clusterScanCtx *cluster_ctx);
