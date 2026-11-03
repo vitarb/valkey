@@ -242,6 +242,9 @@ void unblockClient(client *c, int queue_for_reprocessing) {
     case BLOCKED_INUSE:
         unlinkBlockInUseClient(c);
         break;
+    case BLOCKED_SLAB:
+        slabUnblockClient(c);
+        break;
     default:
         serverPanic("Unknown btype in unblockClient().");
     }
@@ -279,7 +282,8 @@ int blockedClientMayTimeout(client *c) {
     if (c->bstate->btype == BLOCKED_LIST ||
         c->bstate->btype == BLOCKED_ZSET ||
         c->bstate->btype == BLOCKED_STREAM ||
-        c->bstate->btype == BLOCKED_WAIT) {
+        c->bstate->btype == BLOCKED_WAIT ||
+        c->bstate->btype == BLOCKED_SLAB) {
         return 1;
     }
     return 0;
@@ -306,6 +310,9 @@ void replyToBlockedClientTimedOut(client *c) {
         }
     } else if (c->bstate->btype == BLOCKED_MODULE) {
         moduleBlockedClientTimedOut(c, 0);
+    } else if (c->bstate->btype == BLOCKED_SLAB) {
+        slabReplyToBlockedClientTimedOut(c);
+        updateStatsOnUnblock(c, 0, 0, 0);
     } else {
         serverPanic("Unknown btype in replyToBlockedClientTimedOut().");
     }

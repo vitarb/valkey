@@ -25,6 +25,7 @@ const char *COMMAND_GROUP_STR[] = {
     "stream",
     "bitmap",
     "pathhash",
+    "slab",
     "module"
 };
 
@@ -9843,6 +9844,279 @@ struct COMMAND_ARG SUNIONSTORE_Args[] = {
 {MAKE_ARG("key",ARG_TYPE_KEY,1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
 };
 
+/********** SLCOMPACT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLCOMPACT history */
+#define SLCOMPACT_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLCOMPACT tips */
+#define SLCOMPACT_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLCOMPACT key specs */
+keySpec SLCOMPACT_Keyspecs[1] = {
+{NULL,CMD_KEY_RO,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLCOMPACT argument table */
+struct COMMAND_ARG SLCOMPACT_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("full",ARG_TYPE_PURE_TOKEN,-1,"FULL",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("timeout",ARG_TYPE_INTEGER,-1,"WAIT",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** SLCOUNT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLCOUNT history */
+#define SLCOUNT_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLCOUNT tips */
+const char *SLCOUNT_Tips[] = {
+"nondeterministic_output",
+};
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLCOUNT key specs */
+keySpec SLCOUNT_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLCOUNT argument table */
+struct COMMAND_ARG SLCOUNT_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("exact",ARG_TYPE_PURE_TOKEN,-1,"EXACT",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** SLCREATE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLCREATE history */
+#define SLCREATE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLCREATE tips */
+#define SLCREATE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLCREATE key specs */
+keySpec SLCREATE_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_INSERT,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLCREATE auto_compact argument table */
+struct COMMAND_ARG SLCREATE_auto_compact_Subargs[] = {
+{MAKE_ARG("yes",ARG_TYPE_PURE_TOKEN,-1,"YES",NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("no",ARG_TYPE_PURE_TOKEN,-1,"NO",NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/* SLCREATE argument table */
+struct COMMAND_ARG SLCREATE_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("nx",ARG_TYPE_PURE_TOKEN,-1,"NX",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("block-bytes",ARG_TYPE_INTEGER,-1,"BLOCK_BYTES",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("flush-entries",ARG_TYPE_INTEGER,-1,"FLUSH_ENTRIES",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("auto-compact",ARG_TYPE_ONEOF,-1,"AUTO_COMPACT",NULL,NULL,CMD_ARG_OPTIONAL,2,NULL),.subargs=SLCREATE_auto_compact_Subargs},
+};
+
+/********** SLDEL ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLDEL history */
+#define SLDEL_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLDEL tips */
+#define SLDEL_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLDEL key specs */
+keySpec SLDEL_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_DELETE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLDEL argument table */
+struct COMMAND_ARG SLDEL_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("entry",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** SLFLUSH ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLFLUSH history */
+#define SLFLUSH_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLFLUSH tips */
+#define SLFLUSH_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLFLUSH key specs */
+keySpec SLFLUSH_Keyspecs[1] = {
+{NULL,CMD_KEY_RO,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLFLUSH argument table */
+struct COMMAND_ARG SLFLUSH_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("timeout",ARG_TYPE_INTEGER,-1,"WAIT",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** SLGET ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLGET history */
+#define SLGET_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLGET tips */
+#define SLGET_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLGET key specs */
+keySpec SLGET_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLGET argument table */
+struct COMMAND_ARG SLGET_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("entry",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** SLINFO ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLINFO history */
+#define SLINFO_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLINFO tips */
+const char *SLINFO_Tips[] = {
+"nondeterministic_output",
+};
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLINFO key specs */
+keySpec SLINFO_Keyspecs[1] = {
+{NULL,CMD_KEY_RO,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLINFO argument table */
+struct COMMAND_ARG SLINFO_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("full",ARG_TYPE_PURE_TOKEN,-1,"FULL",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** SLMGET ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLMGET history */
+#define SLMGET_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLMGET tips */
+#define SLMGET_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLMGET key specs */
+keySpec SLMGET_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLMGET argument table */
+struct COMMAND_ARG SLMGET_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("entry",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** SLMSET ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLMSET history */
+#define SLMSET_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLMSET tips */
+#define SLMSET_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLMSET key specs */
+keySpec SLMSET_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_UPDATE|CMD_KEY_INSERT,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLMSET data argument table */
+struct COMMAND_ARG SLMSET_data_Subargs[] = {
+{MAKE_ARG("entry",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("value",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/* SLMSET argument table */
+struct COMMAND_ARG SLMSET_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("data",ARG_TYPE_BLOCK,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,2,NULL),.subargs=SLMSET_data_Subargs},
+};
+
+/********** SLSCAN ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* SLSCAN history */
+#define SLSCAN_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* SLSCAN tips */
+#define SLSCAN_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* SLSCAN key specs */
+keySpec SLSCAN_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* SLSCAN argument table */
+struct COMMAND_ARG SLSCAN_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("cursor",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("prefix",ARG_TYPE_STRING,-1,"PREFIX",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("count",ARG_TYPE_INTEGER,-1,"COUNT",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("novalues",ARG_TYPE_PURE_TOKEN,-1,"NOVALUES",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
 /********** BZMPOP ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -12879,6 +13153,17 @@ struct COMMAND_STRUCT serverCommandTable[] = {
 {MAKE_CMD("sscan","Iterates over members of a set.","O(1) for every call. O(N) for a complete iteration, including enough command calls for the cursor to return back to 0. N is the number of elements inside the collection.","2.8.0",CMD_DOC_NONE,NULL,NULL,"set",COMMAND_GROUP_SET,SSCAN_History,0,SSCAN_Tips,1,sscanCommand,-3,CMD_READONLY,ACL_CATEGORY_READ|ACL_CATEGORY_SET|ACL_CATEGORY_SLOW,NULL,SSCAN_Keyspecs,1,NULL,4),.args=SSCAN_Args},
 {MAKE_CMD("sunion","Returns the union of multiple sets.","O(N) where N is the total number of elements in all given sets.","1.0.0",CMD_DOC_NONE,NULL,NULL,"set",COMMAND_GROUP_SET,SUNION_History,0,SUNION_Tips,1,sunionCommand,-2,CMD_READONLY,ACL_CATEGORY_READ|ACL_CATEGORY_SET|ACL_CATEGORY_SLOW,NULL,SUNION_Keyspecs,1,NULL,1),.args=SUNION_Args},
 {MAKE_CMD("sunionstore","Stores the union of multiple sets in a key.","O(N) where N is the total number of elements in all given sets.","1.0.0",CMD_DOC_NONE,NULL,NULL,"set",COMMAND_GROUP_SET,SUNIONSTORE_History,0,SUNIONSTORE_Tips,0,sunionstoreCommand,-3,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_SET|ACL_CATEGORY_SLOW|ACL_CATEGORY_WRITE,NULL,SUNIONSTORE_Keyspecs,2,NULL,2),.args=SUNIONSTORE_Args},
+/* slab */
+{MAKE_CMD("slcompact","Requests compaction of a slab collection's leaves.","O(1) to request.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLCOMPACT_History,0,SLCOMPACT_Tips,0,slcompactCommand,-2,CMD_ADMIN|CMD_BLOCKING,ACL_CATEGORY_SLAB|ACL_CATEGORY_ADMIN|ACL_CATEGORY_DANGEROUS|ACL_CATEGORY_BLOCKING|ACL_CATEGORY_SLOW,NULL,SLCOMPACT_Keyspecs,1,NULL,3),.args=SLCOMPACT_Args},
+{MAKE_CMD("slcount","Returns the number of entries of a slab collection, estimated or exact.","O(1) without EXACT, O(N) with it.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLCOUNT_History,0,SLCOUNT_Tips,1,slcountCommand,-2,CMD_READONLY,ACL_CATEGORY_SLAB|ACL_CATEGORY_READ|ACL_CATEGORY_SLOW,NULL,SLCOUNT_Keyspecs,1,NULL,2),.args=SLCOUNT_Args},
+{MAKE_CMD("slcreate","Creates a slab collection with the given options.","O(1)","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLCREATE_History,0,SLCREATE_Tips,0,slcreateCommand,-2,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_SLAB|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,SLCREATE_Keyspecs,1,NULL,5),.args=SLCREATE_Args},
+{MAKE_CMD("sldel","Deletes one or more entries of a slab collection.","O(N) where N is the number of entries.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLDEL_History,0,SLDEL_Tips,0,sldelCommand,-3,CMD_WRITE,ACL_CATEGORY_SLAB|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,SLDEL_Keyspecs,1,NULL,2),.args=SLDEL_Args},
+{MAKE_CMD("slflush","Hands a slab collection's pending writes to background maintenance.","O(1)","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLFLUSH_History,0,SLFLUSH_Tips,0,slflushCommand,-2,CMD_ADMIN|CMD_BLOCKING,ACL_CATEGORY_SLAB|ACL_CATEGORY_ADMIN|ACL_CATEGORY_DANGEROUS|ACL_CATEGORY_BLOCKING|ACL_CATEGORY_SLOW,NULL,SLFLUSH_Keyspecs,1,NULL,2),.args=SLFLUSH_Args},
+{MAKE_CMD("slget","Returns the value of one entry of a slab collection.","O(log N) where N is the number of entries.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLGET_History,0,SLGET_Tips,0,slgetCommand,3,CMD_READONLY|CMD_FAST,ACL_CATEGORY_SLAB|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,SLGET_Keyspecs,1,NULL,2),.args=SLGET_Args},
+{MAKE_CMD("slinfo","Returns the size and maintenance state of a slab collection.","O(1)","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLINFO_History,0,SLINFO_Tips,1,slinfoCommand,-2,CMD_READONLY,ACL_CATEGORY_SLAB|ACL_CATEGORY_READ|ACL_CATEGORY_SLOW,NULL,SLINFO_Keyspecs,1,NULL,2),.args=SLINFO_Args},
+{MAKE_CMD("slmget","Returns the values of many entries of a slab collection, read at one point in time.","O(K log N) where K is the number of keys requested and N the number of entries.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLMGET_History,0,SLMGET_Tips,0,slmgetCommand,-3,CMD_READONLY,ACL_CATEGORY_SLAB|ACL_CATEGORY_READ|ACL_CATEGORY_SLOW,NULL,SLMGET_Keyspecs,1,NULL,2),.args=SLMGET_Args},
+{MAKE_CMD("slmset","Sets one or more entries of a slab collection, creating the collection if needed.","O(N) where N is the number of entries.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLMSET_History,0,SLMSET_Tips,0,slmsetCommand,-4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_SLAB|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,SLMSET_Keyspecs,1,NULL,2),.args=SLMSET_Args},
+{MAKE_CMD("slscan","Iterates the entries of a slab collection in key order.","O(COUNT) per call.","10.0.0",CMD_DOC_NONE,NULL,NULL,"slab",COMMAND_GROUP_SLAB,SLSCAN_History,0,SLSCAN_Tips,0,slscanCommand,-3,CMD_READONLY,ACL_CATEGORY_SLAB|ACL_CATEGORY_READ|ACL_CATEGORY_SLOW,NULL,SLSCAN_Keyspecs,1,NULL,5),.args=SLSCAN_Args},
 /* sorted_set */
 {MAKE_CMD("bzmpop","Removes and returns a member by score from one or more sorted sets. Blocks until a member is available otherwise. Deletes the sorted set if the last element was popped.","O(K) + O(M*log(N)) where K is the number of provided keys, N being the number of elements in the sorted set, and M being the number of elements popped.","7.0.0",CMD_DOC_NONE,NULL,NULL,"sorted_set",COMMAND_GROUP_SORTED_SET,BZMPOP_History,0,BZMPOP_Tips,0,bzmpopCommand,-5,CMD_WRITE|CMD_BLOCKING,ACL_CATEGORY_BLOCKING|ACL_CATEGORY_SLOW|ACL_CATEGORY_SORTEDSET|ACL_CATEGORY_WRITE,NULL,BZMPOP_Keyspecs,1,bzmpopGetKeys,5),.args=BZMPOP_Args},
 {MAKE_CMD("bzpopmax","Removes and returns the member with the highest score from one or more sorted sets. Blocks until a member is available otherwise. Deletes the sorted set if the last element was popped.","O(log(N)) with N being the number of elements in the sorted set.","5.0.0",CMD_DOC_NONE,NULL,NULL,"sorted_set",COMMAND_GROUP_SORTED_SET,BZPOPMAX_History,1,BZPOPMAX_Tips,0,bzpopmaxCommand,-3,CMD_WRITE|CMD_FAST|CMD_BLOCKING,ACL_CATEGORY_BLOCKING|ACL_CATEGORY_FAST|ACL_CATEGORY_SORTEDSET|ACL_CATEGORY_WRITE,NULL,BZPOPMAX_Keyspecs,1,NULL,2),.args=BZPOPMAX_Args},

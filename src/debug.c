@@ -275,6 +275,8 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
         streamIteratorStop(&si);
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         pathHashTypeDigest(digest, o);
+    } else if (objectGetType(o) == OBJ_SLAB) {
+        slabTypeDigest(digest, o);
     } else if (objectGetType(o) == OBJ_MODULE) {
         ValkeyModuleDigest md = {{0}, {0}, keyobj, db->id};
         moduleValue *mv = objectGetVal(o);
@@ -513,6 +515,18 @@ void debugCommand(client *c) {
             "    Default value is 1GB, allows values up to 4GB. Setting to 0 restores to default.",
             "SET-SKIP-CHECKSUM-VALIDATION <0|1>",
             "    Enables or disables checksum checks for RDB files and RESTORE's payload.",
+            "SLAB VERIFY <key>",
+            "    Check the tree structure of the slab collection at <key>: leaf bounds and",
+            "    the keys of every base block and delta inside their leaf.",
+            "SLAB MAX-PENDING-BYTES <bytes>|MAX-FROZEN-MEMTABLES <count>",
+            "    Set the pending write bytes, or the frozen memtables, at which a slab",
+            "    collection refuses client writes (0 restores the default).",
+            "SLAB PAUSE-MAINTENANCE|RESUME-MAINTENANCE",
+            "    Hold slab maintenance units (running ones finish), or let them run again.",
+            "SLAB HOLD-SECTIONS|RELEASE-SECTIONS",
+            "    Stop slab maintenance threads inside the next section they enter (a fork",
+            "    then waits for them up to its limit and its child can't save), or let",
+            "    them go on.",
             "SLEEP <seconds>",
             "    Stop the server for <seconds>. Decimals allowed.",
             "STRINGMATCH-TEST",
@@ -966,6 +980,8 @@ void debugCommand(client *c) {
         } else {
             addReply(c, shared.ok);
         }
+    } else if (!strcasecmp(objectGetVal(c->argv[1]), "slab") && slabDebugCommand(c)) {
+        /* Replied by slabDebugCommand. */
     } else if (!strcasecmp(objectGetVal(c->argv[1]), "set-skip-checksum-validation") && c->argc == 3) {
         server.skip_checksum_validation = atoi(objectGetVal(c->argv[2]));
         addReply(c, shared.ok);
@@ -2343,6 +2359,7 @@ void killThreads(void) {
     killMainThread();
     bioKillThreads();
     killIOThreads();
+    slabKillThreads();
 }
 
 void doFastMemoryTest(void) {

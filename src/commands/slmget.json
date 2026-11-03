@@ -1,0 +1,64 @@
+{
+    "SLMGET": {
+        "summary": "Returns the values of many entries of a slab collection, read at one point in time.",
+        "complexity": "O(K log N) where K is the number of keys requested and N the number of entries.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -3,
+        "function": "slmgetCommand",
+        "command_flags": [
+            "READONLY"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "READ",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "One value per entry, in request order, null if missing.",
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    {
+                        "type": "string"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "entry",
+                "type": "string",
+                "multiple": true
+            }
+        ]
+    }
+}

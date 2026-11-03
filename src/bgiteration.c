@@ -774,6 +774,9 @@ static void incrementEntryInuse(dbEntry *de) {
     dictEntry *newEntry = dictAddRaw(inUseEntries, de, &existingEntry);
     if (newEntry) {
         incrRefCount(de);
+        /* A slab collection keeps changing representation while in use (installs are
+         * not writes); pin the snapshot the iteration client will read. */
+        if (objectGetType(de) == OBJ_SLAB) slabTypePinForIteration(de);
         dictSetSignedIntegerVal(newEntry, 1);
     } else {
         dictSetSignedIntegerVal(existingEntry, dictGetSignedIntegerVal(existingEntry) + 1);
@@ -785,6 +788,7 @@ static void decrementEntryInuse(dbEntry *de) {
     dictEntry *entry = dictFind(inUseEntries, de);
     if (dictGetSignedIntegerVal(entry) == 1) {
         dictDelete(inUseEntries, de);
+        if (objectGetType(de) == OBJ_SLAB) slabTypeUnpinForIteration(de);
         decrRefCount(de);
     } else {
         serverAssert(dictGetSignedIntegerVal(entry) > 1);

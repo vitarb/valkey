@@ -79,6 +79,9 @@
                                     "const": "sentinel"
                                 },
                                 {
+                                    "const": "slab"
+                                },
+                                {
                                     "const": "server"
                                 },
                                 {
