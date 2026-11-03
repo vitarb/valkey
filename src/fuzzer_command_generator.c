@@ -49,7 +49,8 @@ typedef enum {
     CMD_GROUP_BITMAP = 9,
     CMD_GROUP_PUBSUB = 10,
     CMD_GROUP_GENERIC = 11,
-    CMD_GROUP_PATH_HASH = 12
+    CMD_GROUP_PATH_HASH = 12,
+    CMD_GROUP_SLAB = 13
 } CommandGroupType;
 
 typedef enum {
@@ -219,6 +220,7 @@ static CommandGroupType mapGroupType(const sds groupStr) {
         {"geo", CMD_GROUP_GEO},
         {"bitmap", CMD_GROUP_BITMAP},
         {"pathhash", CMD_GROUP_PATH_HASH},
+        {"slab", CMD_GROUP_SLAB},
         {"pubsub", CMD_GROUP_PUBSUB},
         {"generic", CMD_GROUP_GENERIC},
         {NULL, CMD_GROUP_UNKNOWN}};
@@ -1181,6 +1183,9 @@ static void addKeysToCommand(FuzzerCommand *cmd, int numkeys, CommandArgument *a
             break;
         case CMD_GROUP_PATH_HASH:
             keyPrefix = "pathhash";
+            break;
+        case CMD_GROUP_SLAB:
+            keyPrefix = "slab";
             break;
         case CMD_GROUP_PUBSUB:
             keyPrefix = "channel";

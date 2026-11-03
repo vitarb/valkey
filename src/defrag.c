@@ -715,6 +715,8 @@ static void defragKey(defragKeysCtx *ctx, robj **elemref) {
         defragStream(ob);
     } else if (ob->type == OBJ_PATH_HASH) {
         /* Path hash payload defragmentation is intentionally deferred. */
+    } else if (ob->type == OBJ_SLAB) {
+        /* Slab blocks may be shared with in-flight readers: not moved in place. */
     } else if (ob->type == OBJ_MODULE) {
         defragModule(db, ob);
     } else {

@@ -356,7 +356,7 @@ start_server {tags {"introspection"}} {
 
         # COMMAND DOCS group -> type name reported by TYPE.
         set type_groups [dict create string string list list set set sorted-set zset \
-                                     hash hash stream stream pathhash pathhash]
+                                     hash hash stream stream pathhash pathhash slab slab]
         # Groups whose commands operate on the types above rather than adding one
         # of their own, plus the groups that are not about keys at all.
         set typeless_groups {bitmap cluster connection generic geo hyperloglog pubsub scripting server transactions}

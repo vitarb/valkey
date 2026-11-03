@@ -39,6 +39,7 @@ GROUPS = {
     "stream": "COMMAND_GROUP_STREAM",
     "bitmap": "COMMAND_GROUP_BITMAP",
     "pathhash": "COMMAND_GROUP_PATH_HASH",
+    "slab": "COMMAND_GROUP_SLAB",
 }
 
 
@@ -718,6 +719,7 @@ const char *COMMAND_GROUP_STR[] = {
     "stream",
     "bitmap",
     "pathhash",
+    "slab",
     "module"
 };
 

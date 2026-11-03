@@ -103,6 +103,7 @@ struct ACLCategoryItem {
     {"transaction", ACL_CATEGORY_TRANSACTION},
     {"scripting", ACL_CATEGORY_SCRIPTING},
     {"pathhash", ACL_CATEGORY_PATHHASH},
+    {"slab", ACL_CATEGORY_SLAB},
     {NULL, 0} /* Terminator. */
 };
 

@@ -25,6 +25,7 @@ proc generate_collections {suffix elements} {
         $rd sadd set$suffix $val
         $rd xadd stream$suffix * item 1 value $val
         $rd phset pathhash$suffix p/$j FIELDS 1 $j $val
+        $rd slmset slab$suffix $j $val
     }
     $rd client reply on
     assert_equal OK [$rd read]
@@ -59,6 +60,15 @@ proc generate_types {} {
     # field names than the master recorded
     r xadd streambig * item 1 value 1
     r xadd streambig * item 1 unique value
+
+    # a slab collection with base blocks, leaf deltas with tombstones, and pending writes
+    r slcreate slabblocks FLUSH_ENTRIES 50 BLOCK_BYTES 1024
+    for {set j 0} {$j < 300} {incr j} { r slmset slabblocks k$j v$j }
+    r slflush slabblocks WAIT 0
+    r slmset slabblocks k1 again k2 again
+    r sldel slabblocks k3 k4
+    r slflush slabblocks WAIT 0
+    r slmset slabblocks k5 pending
 }
 
 proc corrupt_payload {payload} {

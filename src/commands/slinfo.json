@@ -1,0 +1,60 @@
+{
+    "SLINFO": {
+        "summary": "Returns the size and maintenance state of a slab collection.",
+        "complexity": "O(1)",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -2,
+        "function": "slinfoCommand",
+        "command_flags": [
+            "READONLY"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "READ",
+            "SLOW"
+        ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "Field names and integer values.",
+            "type": "object",
+            "additionalProperties": {
+                "type": "integer"
+            }
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "full",
+                "type": "pure-token",
+                "token": "FULL",
+                "optional": true
+            }
+        ]
+    }
+}

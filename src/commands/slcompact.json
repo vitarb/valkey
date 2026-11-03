@@ -1,0 +1,72 @@
+{
+    "SLCOMPACT": {
+        "summary": "Requests compaction of a slab collection's leaves.",
+        "complexity": "O(1) to request.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -2,
+        "function": "slcompactCommand",
+        "command_flags": [
+            "ADMIN",
+            "BLOCKING"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "ADMIN",
+            "DANGEROUS",
+            "BLOCKING",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "oneOf": [
+                {
+                    "description": "The number of leaves scheduled (0 with FULL, which picks its leaves as it runs).",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                {
+                    "description": "WAIT timed out, or can't block (MULTI, scripts).",
+                    "type": "null"
+                }
+            ]
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "full",
+                "type": "pure-token",
+                "token": "FULL",
+                "optional": true
+            },
+            {
+                "token": "WAIT",
+                "name": "timeout",
+                "type": "integer",
+                "optional": true
+            }
+        ]
+    }
+}

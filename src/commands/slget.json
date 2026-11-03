@@ -1,0 +1,62 @@
+{
+    "SLGET": {
+        "summary": "Returns the value of one entry of a slab collection.",
+        "complexity": "O(log N) where N is the number of entries.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": 3,
+        "function": "slgetCommand",
+        "command_flags": [
+            "READONLY",
+            "FAST"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "READ",
+            "FAST"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "oneOf": [
+                {
+                    "description": "The value.",
+                    "type": "string"
+                },
+                {
+                    "description": "The entry or collection does not exist.",
+                    "type": "null"
+                }
+            ]
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "entry",
+                "type": "string"
+            }
+        ]
+    }
+}

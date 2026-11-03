@@ -39,6 +39,7 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/ordered_index.c
     ${CMAKE_SOURCE_DIR}/src/t_hash.c
     ${CMAKE_SOURCE_DIR}/src/t_path_hash.c
+    ${CMAKE_SOURCE_DIR}/src/t_slab.c
     ${CMAKE_SOURCE_DIR}/src/slab.c
     ${CMAKE_SOURCE_DIR}/src/slab_block.c
     ${CMAKE_SOURCE_DIR}/src/slab_fence.c

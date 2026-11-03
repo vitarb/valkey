@@ -2415,6 +2415,8 @@ int rewriteObjectRio(rio *aof, robj *o, int db_num) {
         if (rewriteStreamObject(aof, &key, o) == 0) return C_ERR;
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         if (rewritePathHashObject(aof, &key, o) == 0) return C_ERR;
+    } else if (objectGetType(o) == OBJ_SLAB) {
+        if (rewriteSlabObject(aof, &key, o) == 0) return C_ERR;
     } else if (objectGetType(o) == OBJ_MODULE) {
         if (rewriteModuleObject(aof, &key, o, db_num) == 0) return C_ERR;
     } else {

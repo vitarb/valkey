@@ -1,0 +1,86 @@
+{
+    "SLSCAN": {
+        "summary": "Iterates the entries of a slab collection in key order.",
+        "complexity": "O(COUNT) per call.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -3,
+        "function": "slscanCommand",
+        "command_flags": [
+            "READONLY"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "READ",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "The next cursor and the entries.",
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": [
+                {
+                    "description": "The next cursor, or 0 when complete.",
+                    "type": "string"
+                },
+                {
+                    "description": "Entries and their values (entries only with NOVALUES).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            ]
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "cursor",
+                "type": "string"
+            },
+            {
+                "name": "prefix",
+                "type": "string",
+                "token": "PREFIX",
+                "optional": true
+            },
+            {
+                "name": "count",
+                "type": "integer",
+                "token": "COUNT",
+                "optional": true
+            },
+            {
+                "name": "novalues",
+                "type": "pure-token",
+                "token": "NOVALUES",
+                "optional": true
+            }
+        ]
+    }
+}
