@@ -3893,6 +3893,7 @@ robj *slabTypeDup(robj *o);
 size_t slabTypeMemUsage(robj *o);
 size_t slabTypeFreeEffort(robj *o);
 size_t slabTypeLength(robj *o);
+void slabTypeDefrag(robj *o);
 void slabTypeDigest(unsigned char *digest, robj *o);
 int rewriteSlabObject(rio *r, robj *key, robj *o);
 struct slabSnapshot;
