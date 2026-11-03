@@ -78,3 +78,22 @@ start_cluster 3 3 {tags {slab external:skip cluster} overrides {cluster-allow-re
         assert_equal 0 [R $src cluster countkeysinslot $slot]
     } {} {needs:debug}
 }
+
+start_cluster 1 0 {tags {slab external:skip cluster} overrides {slab-query-threads 2 cluster-slot-stats-enabled yes}} {
+    test {A reply from a query thread counts toward its slot's network-bytes-out} {
+        set key {slab:{stats}}
+        slab_cluster_fill 0 $key 100 x
+        set slot [R 0 cluster keyslot $key]
+        set keys {}
+        for {set j 0} {$j < 100} {incr j} { lappend keys [format k%06d $j] }
+        R 0 config resetstat
+        assert_equal v99:x [lindex [R 0 slmget $key {*}$keys] 99]
+        assert {[getInfoProperty [R 0 info debug] slab_reads_dispatched] >= 1}
+        set want [string length "*100\r\n"]
+        for {set j 0} {$j < 100} {incr j} {
+            incr want [string length "\$[string length v$j:x]\r\nv$j:x\r\n"]
+        }
+        set stats [R 0 cluster slot-stats slotsrange $slot $slot]
+        assert_equal $want [dict get [lindex $stats 0 1] network-bytes-out]
+    }
+}

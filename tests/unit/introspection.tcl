@@ -1380,6 +1380,7 @@ start_server {tags {"introspection"}} {
             rdma-port
             forkless-infrastructure-enabled
             slab-maintenance-threads
+            slab-query-threads
         }
 
         if {!$::tls} {

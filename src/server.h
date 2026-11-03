@@ -364,7 +364,7 @@ typedef enum blocking_type {
     BLOCKED_POSTPONE, /* Blocked by processCommand, re-try processing later. */
     BLOCKED_SHUTDOWN, /* SHUTDOWN. */
     BLOCKED_INUSE,    /* Key in use by background thread. */
-    BLOCKED_SLAB,     /* SLFLUSH / SLCOMPACT WAIT for slab maintenance. */
+    BLOCKED_SLAB,     /* Slab collection: WAIT for maintenance, or a read on a query thread. */
     BLOCKED_NUM,      /* Number of blocked states. */
     BLOCKED_END       /* End of enumeration */
 } blocking_type;
@@ -1068,6 +1068,9 @@ typedef struct blockingState {
     void *async_rm_call_handle; /* ValkeyModuleAsyncRMCallPromise structure.
                                    which is opaque for the Redis core, only
                                    handled in module.c. */
+
+    /* BLOCKED_SLAB: the read in flight on a query thread, if any (slab_read.c). */
+    void *slab_task;
 } blockingState;
 
 /* The following structure represents a node in the server.ready_keys list,
@@ -2396,6 +2399,7 @@ struct valkeyServer {
     size_t stream_node_max_bytes;
     /* Slab collections */
     int slab_maintenance_threads; /* Background maintenance threads; -1 = by core count, 0 = inline. */
+    int slab_query_threads;       /* Threads answering large reads; -1 = io-threads - 1, 0 = none. */
     long long stream_node_max_entries;
     /* List parameters */
     int list_max_listpack_size;
@@ -3122,6 +3126,20 @@ void freeClientArgv(client *c);
 void sendReplyToClient(connection *conn);
 int isDeferredReplyEnabled(client *c);
 void initDeferredReplyBuffer(client *c);
+void enableDeferredReplyBuffer(client *c);
+typedef struct replyChain {
+    list *blocks; /* plain clientReplyBlocks */
+    size_t size;  /* allocated block bytes, as reply_bytes counts them */
+    size_t used;  /* reply bytes */
+} replyChain;
+void replyChainInit(replyChain *rc);
+void replyChainRelease(replyChain *rc);
+void replyChainProto(replyChain *rc, const char *s, size_t len);
+void replyChainLongLongWithPrefix(replyChain *rc, long long ll, char prefix);
+void replyChainBulkCBuffer(replyChain *rc, const void *p, size_t len);
+void replyChainNull(replyChain *rc, int resp);
+void replyChainJoin(replyChain *dst, replyChain *src);
+void addReplyChain(client *c, replyChain *rc);
 void *addReplyDeferredLen(client *c);
 void setDeferredArrayLen(client *c, void *node, long length);
 void setDeferredMapLen(client *c, void *node, long length);
@@ -3887,9 +3905,11 @@ bool slabTypeSnapshotForSave(robj *o, struct slabSnapshot *s);
 void slabTypePinForIteration(robj *o);
 void slabTypeUnpinForIteration(robj *o);
 void slabUnblockClient(client *c);
+bool slabBlockedClientMayTimeout(client *c);
 void slabReplyToBlockedClientTimedOut(client *c);
 void slabInitServer(void);
 void slabBeforeSleep(void);
+bool slabReadHasDeferred(void);
 void slabKillThreads(void);
 sds genSlabInfoString(sds info, bool debug);
 bool slabDebugCommand(client *c);

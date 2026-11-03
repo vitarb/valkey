@@ -1756,6 +1756,105 @@ void initDeferredReplyBuffer(client *c) {
     if (!isDeferredReplyEnabled(c)) c->deferred_reply_bytes = 0;
 }
 
+/* Holds all further output of the client (pushes included) in the deferred buffer
+ * until commitDeferredReplyBuffer(): used while a slab read runs on a query thread,
+ * so its reply precedes anything produced meanwhile. */
+void enableDeferredReplyBuffer(client *c) {
+    if (c->deferred_reply == NULL) {
+        c->deferred_reply = listCreate();
+        listSetFreeMethod(c->deferred_reply, freeClientReplyValue);
+    }
+    if (!isDeferredReplyEnabled(c)) c->deferred_reply_bytes = 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Reply chains: a reply built without a client, possibly on another thread, and
+ * attached to a client on the main thread with addReplyChain().
+ * -------------------------------------------------------------------------- */
+
+void replyChainInit(replyChain *rc) {
+    rc->blocks = listCreate();
+    listSetFreeMethod(rc->blocks, freeClientReplyValue);
+    rc->size = rc->used = 0;
+}
+
+void replyChainRelease(replyChain *rc) {
+    if (rc->blocks) listRelease(rc->blocks);
+    rc->blocks = NULL;
+}
+
+void replyChainProto(replyChain *rc, const char *s, size_t len) {
+    rc->used += len;
+    listNode *ln = listLast(rc->blocks);
+    clientReplyBlock *tail = ln ? listNodeValue(ln) : NULL;
+    if (tail) {
+        size_t avail = tail->size - tail->used, copy = avail < len ? avail : len;
+        memcpy(tail->buf + tail->used, s, copy);
+        tail->used += copy;
+        s += copy;
+        len -= copy;
+    }
+    if (len) {
+        size_t size = len < PROTO_REPLY_CHUNK_BYTES ? PROTO_REPLY_CHUNK_BYTES : len, usable;
+        tail = zmalloc_usable(size + sizeof(clientReplyBlock), &usable);
+        tail->size = usable - sizeof(clientReplyBlock);
+        tail->used = len;
+        tail->last_header = NULL;
+        memset(&tail->flag, 0, sizeof(tail->flag));
+        memcpy(tail->buf, s, len);
+        listAddNodeTail(rc->blocks, tail);
+        rc->size += tail->size;
+    }
+}
+
+/* An array, map or bulk header, or an integer: the prefix, then the number. */
+void replyChainLongLongWithPrefix(replyChain *rc, long long ll, char prefix) {
+    char buf[LONG_STR_SIZE + 3];
+    buf[0] = prefix;
+    int len = ll2string(buf + 1, sizeof(buf) - 3, ll);
+    buf[len + 1] = '\r';
+    buf[len + 2] = '\n';
+    replyChainProto(rc, buf, len + 3);
+}
+
+void replyChainBulkCBuffer(replyChain *rc, const void *p, size_t len) {
+    replyChainLongLongWithPrefix(rc, (long long)len, '$');
+    replyChainProto(rc, p, len);
+    replyChainProto(rc, "\r\n", 2);
+}
+
+void replyChainNull(replyChain *rc, int resp) {
+    if (resp == 2)
+        replyChainProto(rc, "$-1\r\n", 5);
+    else
+        replyChainProto(rc, "_\r\n", 3);
+}
+
+/* Appends 'src' to 'dst'; 'src' is left empty. */
+void replyChainJoin(replyChain *dst, replyChain *src) {
+    listJoin(dst->blocks, src->blocks);
+    dst->size += src->size;
+    dst->used += src->used;
+    src->size = src->used = 0;
+}
+
+/* Appends the chain to the client's reply list, with the accounting of the addReply*
+ * functions (output buffer limits, the command's output bytes for the commandlog and
+ * the slot stats). The chain goes ahead of anything held in the deferred reply
+ * buffer, and is left empty. */
+void addReplyChain(client *c, replyChain *rc) {
+    if (!c->flag.close_after_reply && prepareClientToWrite(c) == C_OK) {
+        c->net_output_bytes_curr_cmd += rc->used;
+        reqresSaveClientReplyOffset(c);
+        listJoin(c->reply, rc->blocks);
+        c->reply_bytes += rc->size;
+        closeClientOnOutputBufferLimitReached(c, 1);
+    } else {
+        listEmpty(rc->blocks);
+    }
+    rc->size = rc->used = 0;
+}
+
 static void resetDeferredReplyBuffer(client *c) {
     listEmpty(c->deferred_reply);
     c->deferred_reply_bytes = ULLONG_MAX;
