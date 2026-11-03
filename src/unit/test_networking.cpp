@@ -11,6 +11,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include "server.h"
@@ -971,4 +972,96 @@ TEST_F(NetworkingTest, TestReadDoneKeepsPostponeWhileWritePending) {
 
     zfree(c);
     connFreeFake(fc);
+}
+
+/* The bytes of a reply list, in order. */
+static std::string replyListBytes(list *blocks) {
+    std::string out;
+    listIter li;
+    listNode *ln;
+    listRewind(blocks, &li);
+    while ((ln = listNext(&li))) {
+        clientReplyBlock *b = (clientReplyBlock *)listNodeValue(ln);
+        out.append(b->buf, b->used);
+    }
+    return out;
+}
+
+TEST_F(NetworkingTest, TestReplyChainProtocol) {
+    replyChain rc;
+    replyChainInit(&rc);
+    replyChainLongLongWithPrefix(&rc, 3, '*');
+    replyChainBulkCBuffer(&rc, "ab", 2);
+    replyChainNull(&rc, 2);
+    replyChainNull(&rc, 3);
+    replyChainLongLongWithPrefix(&rc, -42, ':');
+    const std::string want = "*3\r\n$2\r\nab\r\n$-1\r\n_\r\n:-42\r\n";
+    ASSERT_EQ(replyListBytes(rc.blocks), want);
+    ASSERT_EQ(rc.used, want.size());
+
+    /* A value larger than a reply block spans blocks and keeps every byte. */
+    replyChain big;
+    replyChainInit(&big);
+    std::string value(PROTO_REPLY_CHUNK_BYTES * 2 + 5, 'x');
+    value[0] = 'a';
+    value[value.size() - 1] = 'z';
+    replyChainBulkCBuffer(&big, value.data(), value.size());
+    const std::string big_want = "$" + std::to_string(value.size()) + "\r\n" + value + "\r\n";
+    ASSERT_EQ(replyListBytes(big.blocks), big_want);
+    ASSERT_EQ(big.used, big_want.size());
+    ASSERT_GE(big.size, big.used);
+
+    /* A join appends in order and leaves the source empty. */
+    size_t size = rc.size + big.size;
+    replyChainJoin(&rc, &big);
+    ASSERT_EQ(replyListBytes(rc.blocks), want + big_want);
+    ASSERT_EQ(rc.used, want.size() + big_want.size());
+    ASSERT_EQ(rc.size, size);
+    ASSERT_EQ(big.used, 0u);
+    ASSERT_EQ(big.size, 0u);
+    ASSERT_EQ(listLength(big.blocks), 0u);
+
+    replyChainRelease(&rc);
+    replyChainRelease(&big);
+    ASSERT_EQ(rc.blocks, nullptr);
+}
+
+TEST_F(NetworkingTest, TestReplyChainPrecedesDeferredOutput) {
+    client *c = createTestClient();
+    c->flag.script = 1; /* no socket: prepareClientToWrite queues nothing */
+    /* Mock ACL: the output buffer limit check asks whether the client must authenticate. */
+    user u;
+    user *saved_default = DefaultUser;
+    DefaultUser = &u;
+    DefaultUser->flags = USER_FLAG_NOPASS;
+    /* Output produced while the reply is built elsewhere waits in the deferred buffer. */
+    enableDeferredReplyBuffer(c);
+    ASSERT_NE(c->deferred_reply_bytes, ULLONG_MAX);
+    _addReplyToBufferOrList(c, ">push\r\n", 7);
+    ASSERT_EQ(c->bufpos, 0u);
+    ASSERT_EQ(listLength(c->reply), 0u);
+
+    replyChain rc;
+    replyChainInit(&rc);
+    replyChainProto(&rc, "+reply\r\n", 8);
+    addReplyChain(c, &rc);
+    ASSERT_EQ(rc.used, 0u);
+    ASSERT_EQ(listLength(rc.blocks), 0u);
+    ASSERT_EQ(c->net_output_bytes_curr_cmd, 7u + 8u);
+
+    commitDeferredReplyBuffer(c, 0);
+    ASSERT_EQ(c->deferred_reply_bytes, ULLONG_MAX);
+    ASSERT_EQ(replyListBytes(c->reply), "+reply\r\n>push\r\n");
+
+    /* A client that closes after its reply gets nothing more. */
+    c->flag.close_after_reply = 1;
+    replyChainProto(&rc, "+late\r\n", 7);
+    addReplyChain(c, &rc);
+    ASSERT_EQ(listLength(rc.blocks), 0u);
+    ASSERT_EQ(replyListBytes(c->reply), "+reply\r\n>push\r\n");
+
+    replyChainRelease(&rc);
+    listRelease(c->deferred_reply);
+    freeReplyOffloadClient(c);
+    DefaultUser = saved_default;
 }

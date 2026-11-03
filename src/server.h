@@ -3112,6 +3112,20 @@ void freeClientArgv(client *c);
 void sendReplyToClient(connection *conn);
 int isDeferredReplyEnabled(client *c);
 void initDeferredReplyBuffer(client *c);
+void enableDeferredReplyBuffer(client *c);
+typedef struct replyChain {
+    list *blocks; /* plain clientReplyBlocks */
+    size_t size;  /* allocated block bytes, as reply_bytes counts them */
+    size_t used;  /* reply bytes */
+} replyChain;
+void replyChainInit(replyChain *rc);
+void replyChainRelease(replyChain *rc);
+void replyChainProto(replyChain *rc, const char *s, size_t len);
+void replyChainLongLongWithPrefix(replyChain *rc, long long ll, char prefix);
+void replyChainBulkCBuffer(replyChain *rc, const void *p, size_t len);
+void replyChainNull(replyChain *rc, int resp);
+void replyChainJoin(replyChain *dst, replyChain *src);
+void addReplyChain(client *c, replyChain *rc);
 void *addReplyDeferredLen(client *c);
 void setDeferredArrayLen(client *c, void *node, long length);
 void setDeferredMapLen(client *c, void *node, long length);
