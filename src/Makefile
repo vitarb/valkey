@@ -607,8 +607,11 @@ ENGINE_SERVER_OBJ = \
     sha1.o \
     sha256.o \
     siphash.o \
+    slab.o \
     slab_block.o \
     slab_fence.o \
+    slab_maint.o \
+    slab_tree.o \
     slab_vlog.o \
     socket.o \
     sort.o \
