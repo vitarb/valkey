@@ -1,0 +1,67 @@
+{
+    "SLMSET": {
+        "summary": "Sets one or more entries of a slab collection, creating the collection if needed.",
+        "complexity": "O(N) where N is the number of entries.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -4,
+        "function": "slmsetCommand",
+        "command_flags": [
+            "WRITE",
+            "DENYOOM"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "UPDATE",
+                    "INSERT"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "The number of entries set.",
+            "type": "integer",
+            "minimum": 1
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "data",
+                "type": "block",
+                "multiple": true,
+                "arguments": [
+                    {
+                        "name": "entry",
+                        "type": "string"
+                    },
+                    {
+                        "name": "value",
+                        "type": "string"
+                    }
+                ]
+            }
+        ]
+    }
+}

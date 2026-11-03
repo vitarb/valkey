@@ -1,0 +1,84 @@
+{
+    "SLALTER": {
+        "summary": "Changes the options of a slab collection.",
+        "complexity": "O(1)",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -4,
+        "function": "slalterCommand",
+        "command_flags": [
+            "WRITE"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "UPDATE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "const": "OK"
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "token": "BLOCK_BYTES",
+                "name": "block-bytes",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "FLUSH_ENTRIES",
+                "name": "flush-entries",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "FLUSH_INTERVAL_MS",
+                "name": "flush-interval-ms",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "AUTO_COMPACT",
+                "name": "auto-compact",
+                "type": "oneof",
+                "arguments": [
+                    {
+                        "name": "yes",
+                        "type": "pure-token",
+                        "token": "YES"
+                    },
+                    {
+                        "name": "no",
+                        "type": "pure-token",
+                        "token": "NO"
+                    }
+                ],
+                "optional": true
+            }
+        ]
+    }
+}

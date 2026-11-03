@@ -97,6 +97,7 @@ typedef long long ustime_t;
 #define VALKEYMODULE_KEYTYPE_MODULE 6
 #define VALKEYMODULE_KEYTYPE_STREAM 7
 #define VALKEYMODULE_KEYTYPE_PATH_HASH 8
+#define VALKEYMODULE_KEYTYPE_SLAB 9
 
 /* Reply types. */
 #define VALKEYMODULE_REPLY_UNKNOWN -1
@@ -254,16 +255,18 @@ This flag should not be used directly by the module.
 #define VALKEYMODULE_NOTIFY_MODULE (1 << 13)    /* d, module key space notification */
 #define VALKEYMODULE_NOTIFY_NEW (1 << 14)       /* n, new key notification */
 #define VALKEYMODULE_NOTIFY_PATH_HASH (1 << 15) /* p */
+#define VALKEYMODULE_NOTIFY_SLAB (1 << 16)      /* c */
 
 /* Next notification flag, must be updated when adding new flags above!
 This flag should not be used directly by the module.
  * Use ValkeyModule_GetKeyspaceNotificationFlagsAll instead. */
-#define _VALKEYMODULE_NOTIFY_NEXT (1 << 16)
+#define _VALKEYMODULE_NOTIFY_NEXT (1 << 17)
 
 #define VALKEYMODULE_NOTIFY_ALL                                                                                        \
     (VALKEYMODULE_NOTIFY_GENERIC | VALKEYMODULE_NOTIFY_STRING | VALKEYMODULE_NOTIFY_LIST | VALKEYMODULE_NOTIFY_SET |   \
      VALKEYMODULE_NOTIFY_HASH | VALKEYMODULE_NOTIFY_ZSET | VALKEYMODULE_NOTIFY_EXPIRED | VALKEYMODULE_NOTIFY_EVICTED | \
-     VALKEYMODULE_NOTIFY_STREAM | VALKEYMODULE_NOTIFY_MODULE | VALKEYMODULE_NOTIFY_PATH_HASH) /* A */
+     VALKEYMODULE_NOTIFY_STREAM | VALKEYMODULE_NOTIFY_MODULE | VALKEYMODULE_NOTIFY_PATH_HASH |                         \
+     VALKEYMODULE_NOTIFY_SLAB) /* A */
 
 /* A special pointer that we can use between the core and the module to signal
  * field deletion, and that is impossible to be a valid pointer. */

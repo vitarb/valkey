@@ -60,6 +60,7 @@ int keyspaceEventsStringToFlags(char *classes) {
         case 'd': flags |= NOTIFY_MODULE; break;
         case 'n': flags |= NOTIFY_NEW; break;
         case 'p': flags |= NOTIFY_PATH_HASH; break;
+        case 'c': flags |= NOTIFY_SLAB; break;
         default: return -1;
         }
     }
@@ -88,6 +89,7 @@ sds keyspaceEventsFlagsToString(int flags) {
         if (flags & NOTIFY_STREAM) res = sdscatlen(res, "t", 1);
         if (flags & NOTIFY_MODULE) res = sdscatlen(res, "d", 1);
         if (flags & NOTIFY_PATH_HASH) res = sdscatlen(res, "p", 1);
+        if (flags & NOTIFY_SLAB) res = sdscatlen(res, "c", 1);
         if (flags & NOTIFY_NEW) res = sdscatlen(res, "n", 1);
     }
     if (flags & NOTIFY_KEYSPACE) res = sdscatlen(res, "K", 1);
@@ -110,7 +112,7 @@ void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
     char buf[24];
     client *c = server.executing_client;
     debugServerAssert(moduleNotifyKeyspaceSubscribersCnt() == 0 ||
-                      (type & (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_STREAM | NOTIFY_PATH_HASH)) == 0 ||
+                      (type & (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_STREAM | NOTIFY_PATH_HASH | NOTIFY_SLAB)) == 0 ||
                       c == NULL ||
                       c->cmd == NULL ||
                       (c->cmd->flags & CMD_WRITE) == 0 ||

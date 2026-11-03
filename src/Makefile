@@ -622,6 +622,7 @@ ENGINE_SERVER_OBJ = \
     t_hash.o \
     t_list.o \
     t_path_hash.o \
+    t_slab.o \
     t_set.o \
     t_stream.o \
     t_string.o \

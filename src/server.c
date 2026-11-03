@@ -32,6 +32,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include "server.h"
+#include "slab.h"
 #include "hotkeys.h"
 #include "ordered_index.h"
 #include "connection.h"
@@ -919,6 +920,7 @@ int hasActiveSaveOrChild(void) {
 void resetChildState(void) {
     server.child_type = CHILD_TYPE_NONE;
     server.child_pid = -1;
+    slabSetChildActive(false);
     server.stat_current_cow_peak = 0;
     server.stat_current_cow_bytes = 0;
     server.stat_current_cow_updated = 0;
@@ -1959,6 +1961,9 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * events to handle. */
     if (ProcessingEventsWhileBlocked) {
         uint64_t processed = 0;
+        /* Slab installs never change logical content, so they may run while loading
+         * or inside a busy script; waiting clients are answered later. */
+        slabMaintDrain();
         processed += processIOThreadsResponses();
         processed += connTypeProcessPendingData();
         /* Keep an online compressed primary draining when a long-running
@@ -2000,6 +2005,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Release keys from bgIteration before processing unblocked clients. */
     bgIteration_beforeSleep();
+    /* Apply finished slab maintenance and answer the clients waiting for it. */
+    slabBeforeSleep();
     /* Handle blocked clients.
      * must be done before flushAppendOnlyFile, in case of appendfsync=always,
      * since the unblocked clients may write data. */
@@ -2936,6 +2943,8 @@ void resetServerStats(void) {
     server.stat_numcommands = 0;
     server.stat_numconnections = 0;
     server.stat_expiredkeys = 0;
+    server.stat_slab_writes_rejected_busy = 0;
+    server.stat_slab_admission_bypassed = 0;
     server.stat_expiredfields = 0;
     server.stat_expired_keys_stale_perc = 0;
     server.stat_expired_keys_with_vola_stale_perc = 0;
@@ -3263,6 +3272,9 @@ void initServer(void) {
     if (aeCreateFileEvent(server.el, server.module_pipe[0], AE_READABLE, modulePipeReadable, NULL) == AE_ERR) {
         serverPanic("Error registering the readable event for the module pipe.");
     }
+
+    /* Slab collections: the hash seed and thread counts. No thread starts here. */
+    slabInitServer();
 
     /* Register before and after sleep handlers (note this needs to be done
      * before loading persistence since it is used by processEventsWhileBlocked. */
@@ -7149,6 +7161,12 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         raxStop(&ri);
     }
 
+    /* Slab collections (not a default section) */
+    if (all_sections || (dictFind(section_dict, "slab") != NULL)) {
+        if (sections++) info = sdscat(info, "\r\n");
+        info = genSlabInfoString(info, false);
+    }
+
     /* Latency by percentile distribution per command */
     if (all_sections || (dictFind(section_dict, "latencystats") != NULL)) {
         if (sections++) info = sdscat(info, "\r\n");
@@ -7243,6 +7261,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "io_threaded_reads_pending:%lld\r\n", server.stat_io_reads_pending,
                 "io_threaded_writes_pending:%lld\r\n", server.stat_io_writes_pending));
 
+        info = genSlabInfoString(info, true);
         info = forkless_catDebugInfo(info);
         info = throttleRepl_sdscatInfoDebugMetrics(info);
     }
@@ -7557,7 +7576,11 @@ int serverFork(int purpose) {
 
     int childpid;
     ustime_t start = ustime();
+    /* Slab maintenance threads publish in place (delta-log appends); wait for running
+     * publications so the child's image never holds a half-published one. */
+    bool slab_prepared = slabForkPrepare();
     if ((childpid = valkey_fork()) == 0) {
+        slabForkDone(true, slab_prepared);
         /* Child.
          *
          * The order of setting things up follows some reasoning:
@@ -7576,6 +7599,7 @@ int serverFork(int purpose) {
         if (server.child_info_pipe[0] != -1) close(server.child_info_pipe[0]);
     } else {
         /* Parent */
+        slabForkDone(false, slab_prepared);
         if (childpid == -1) {
             int fork_errno = errno;
             if (isMutuallyExclusiveChildType(purpose)) closeChildInfoPipe();
@@ -7606,6 +7630,7 @@ int serverFork(int purpose) {
         if (isMutuallyExclusiveChildType(purpose)) {
             server.child_pid = childpid;
             server.child_type = purpose;
+            slabSetChildActive(true);
             server.stat_current_cow_peak = 0;
             server.stat_current_cow_bytes = 0;
             server.stat_current_cow_updated = 0;

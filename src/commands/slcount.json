@@ -1,0 +1,58 @@
+{
+    "SLCOUNT": {
+        "summary": "Returns the number of entries of a slab collection, estimated or exact.",
+        "complexity": "O(1) without EXACT, O(N) with it.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -2,
+        "function": "slcountCommand",
+        "command_flags": [
+            "READONLY"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "READ",
+            "SLOW"
+        ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "exact",
+                "type": "pure-token",
+                "token": "EXACT",
+                "optional": true
+            }
+        ]
+    }
+}

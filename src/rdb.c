@@ -797,6 +797,8 @@ int rdbGetObjectType(robj *o, int rdbver) {
             return RDB_TYPE_PATH_HASH;
         else
             return -1; /* can't be stored in old RDB */
+    /* Not persisted yet. */
+    case OBJ_SLAB: return -1;
     case OBJ_MODULE: return RDB_TYPE_MODULE_2;
     default: serverPanic("Unknown object type");
     }

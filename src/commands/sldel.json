@@ -1,0 +1,55 @@
+{
+    "SLDEL": {
+        "summary": "Deletes one or more entries of a slab collection.",
+        "complexity": "O(N) where N is the number of entries.",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -3,
+        "function": "sldelCommand",
+        "command_flags": [
+            "WRITE"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "DELETE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "The number of entries processed (each writes a tombstone).",
+            "type": "integer",
+            "minimum": 0
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "entry",
+                "type": "string",
+                "multiple": true
+            }
+        ]
+    }
+}

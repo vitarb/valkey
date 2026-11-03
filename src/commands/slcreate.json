@@ -1,0 +1,94 @@
+{
+    "SLCREATE": {
+        "summary": "Creates a slab collection with the given options.",
+        "complexity": "O(1)",
+        "group": "slab",
+        "since": "10.0.0",
+        "arity": -2,
+        "function": "slcreateCommand",
+        "command_flags": [
+            "WRITE",
+            "DENYOOM"
+        ],
+        "acl_categories": [
+            "SLAB",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "INSERT"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "reply_schema": {
+            "description": "1 if the collection was created, 0 if it existed and NX was given.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+        },
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "nx",
+                "type": "pure-token",
+                "token": "NX",
+                "optional": true
+            },
+            {
+                "token": "BLOCK_BYTES",
+                "name": "block-bytes",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "FLUSH_ENTRIES",
+                "name": "flush-entries",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "FLUSH_INTERVAL_MS",
+                "name": "flush-interval-ms",
+                "type": "integer",
+                "optional": true
+            },
+            {
+                "token": "AUTO_COMPACT",
+                "name": "auto-compact",
+                "type": "oneof",
+                "arguments": [
+                    {
+                        "name": "yes",
+                        "type": "pure-token",
+                        "token": "YES"
+                    },
+                    {
+                        "name": "no",
+                        "type": "pure-token",
+                        "token": "NO"
+                    }
+                ],
+                "optional": true
+            }
+        ]
+    }
+}

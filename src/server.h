@@ -271,6 +271,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define ACL_CATEGORY_TRANSACTION (1ULL << 19)
 #define ACL_CATEGORY_SCRIPTING (1ULL << 20)
 #define ACL_CATEGORY_PATHHASH (1ULL << 21)
+#define ACL_CATEGORY_SLAB (1ULL << 22)
 
 /* Key-spec flags *
  * -------------- */
@@ -363,6 +364,7 @@ typedef enum blocking_type {
     BLOCKED_POSTPONE, /* Blocked by processCommand, re-try processing later. */
     BLOCKED_SHUTDOWN, /* SHUTDOWN. */
     BLOCKED_INUSE,    /* Key in use by background thread. */
+    BLOCKED_SLAB,     /* SLFLUSH / SLCOMPACT WAIT for slab maintenance. */
     BLOCKED_NUM,      /* Number of blocked states. */
     BLOCKED_END       /* End of enumeration */
 } blocking_type;
@@ -721,9 +723,10 @@ typedef enum {
 #define NOTIFY_MODULE (1 << 13)    /* d, module key space notification */
 #define NOTIFY_NEW (1 << 14)       /* n, new key notification */
 #define NOTIFY_PATH_HASH (1 << 15) /* p */
+#define NOTIFY_SLAB (1 << 16)      /* c */
 #define NOTIFY_ALL                                                                                            \
     (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | \
-     NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE | NOTIFY_PATH_HASH) /* A flag */
+     NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE | NOTIFY_PATH_HASH | NOTIFY_SLAB) /* A flag */
 
 /* Period in milliseconds between successive clusterCron() executions */
 #define CLUSTER_CRON_PERIOD_MS 100
@@ -819,7 +822,8 @@ typedef enum {
 #define OBJ_MODULE 5    /* Module object. */
 #define OBJ_STREAM 6    /* Stream object. */
 #define OBJ_PATH_HASH 7 /* Path hash object. */
-#define OBJ_TYPE_MAX 8  /* Maximum number of object types */
+#define OBJ_SLAB 8      /* Slab collection object. */
+#define OBJ_TYPE_MAX 9  /* Maximum number of object types */
 
 typedef struct ValkeyModuleType moduleType;
 
@@ -843,6 +847,7 @@ typedef struct ValkeyModuleType moduleType;
 #define OBJ_ENCODING_LISTPACK 11  /* Encoded as a listpack */
 #define OBJ_ENCODING_LISTPACK2 12 /* Encoded as a listpack with metadata tag */
 #define OBJ_ENCODING_PATH_HASH 13 /* Path hash backed by a radix tree */
+#define OBJ_ENCODING_SLAB 14      /* Slab collection: memtables and a tree of blocks */
 
 #define OBJ_REFCOUNT_BITS 29
 #define OBJ_SHARED_REFCOUNT ((1 << OBJ_REFCOUNT_BITS) - 1) /* Global object never destroyed. */
@@ -1989,6 +1994,8 @@ struct valkeyServer {
     long long stat_numcommands;                    /* Number of processed commands */
     long long stat_numconnections;                 /* Number of connections received */
     long long stat_expiredkeys;                    /* Number of expired keys */
+    long long stat_slab_writes_rejected_busy;      /* Slab client writes refused with -SLABBUSY */
+    long long stat_slab_admission_bypassed;        /* Replicated/AOF slab writes past a client limit */
     long long stat_expiredfields;                  /* Number of expired hash fields */
     double stat_expired_keys_stale_perc;           /* Percentage of keys probably expired */
     double stat_expired_keys_with_vola_stale_perc; /* Percentage of keys probably expired */
@@ -2387,6 +2394,8 @@ struct valkeyServer {
     size_t zset_max_listpack_value;
     size_t hll_sparse_max_bytes;
     size_t stream_node_max_bytes;
+    /* Slab collections */
+    int slab_maintenance_threads; /* Background maintenance threads; -1 = by core count, 0 = inline. */
     long long stream_node_max_entries;
     /* List parameters */
     int list_max_listpack_size;
@@ -2718,6 +2727,7 @@ typedef enum {
     COMMAND_GROUP_STREAM,
     COMMAND_GROUP_BITMAP,
     COMMAND_GROUP_PATH_HASH,
+    COMMAND_GROUP_SLAB,
     COMMAND_GROUP_MODULE,
 } serverCommandGroup;
 
@@ -2829,7 +2839,7 @@ typedef int *commandDbIdArgs(robj **argv, int argc, int *count);
  * See valkey.conf for the exact meaning of each.
  *
  * @keyspace, @read, @write, @set, @sortedset, @list, @hash, @string, @bitmap,
- * @hyperloglog, @stream, @pathhash, @admin, @fast, @slow, @pubsub, @blocking, @dangerous,
+ * @hyperloglog, @stream, @pathhash, @slab, @admin, @fast, @slow, @pubsub, @blocking, @dangerous,
  * @connection, @transaction, @scripting, @geo.
  *
  * Note that:
@@ -3860,6 +3870,35 @@ void phprefixesCommand(client *c);
 void phdelprefixCommand(client *c);
 void phscanCommand(client *c);
 void phcardCommand(client *c);
+
+/* Slab data type */
+struct slabConfig;
+robj *createSlabObject(const struct slabConfig *cfg);
+void freeSlabObject(robj *o);
+robj *slabTypeDup(robj *o);
+size_t slabTypeMemUsage(robj *o);
+size_t slabTypeFreeEffort(robj *o);
+size_t slabTypeLength(robj *o);
+void slabTypeDigest(unsigned char *digest, robj *o);
+int rewriteSlabObject(rio *r, robj *key, robj *o);
+void slabUnblockClient(client *c);
+void slabReplyToBlockedClientTimedOut(client *c);
+void slabInitServer(void);
+void slabBeforeSleep(void);
+void slabKillThreads(void);
+sds genSlabInfoString(sds info, bool debug);
+bool slabDebugCommand(client *c);
+void slcreateCommand(client *c);
+void slalterCommand(client *c);
+void slmsetCommand(client *c);
+void sldelCommand(client *c);
+void slgetCommand(client *c);
+void slmgetCommand(client *c);
+void slscanCommand(client *c);
+void slcountCommand(client *c);
+void slinfoCommand(client *c);
+void slflushCommand(client *c);
+void slcompactCommand(client *c);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);
