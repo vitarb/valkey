@@ -92,6 +92,7 @@ void initClientBlockingState(client *c) {
     c->bstate->generic_blocked_list_node = NULL;
     c->bstate->module_blocked_handle = NULL;
     c->bstate->async_rm_call_handle = NULL;
+    c->bstate->slab_task = NULL;
 }
 
 void freeClientBlockingState(client *c) {
@@ -278,12 +279,14 @@ int blockedClientMayTimeout(client *c) {
     if (c->bstate->btype == BLOCKED_MODULE) {
         return moduleBlockedClientMayTimeout(c);
     }
+    if (c->bstate->btype == BLOCKED_SLAB) {
+        return slabBlockedClientMayTimeout(c);
+    }
 
     if (c->bstate->btype == BLOCKED_LIST ||
         c->bstate->btype == BLOCKED_ZSET ||
         c->bstate->btype == BLOCKED_STREAM ||
-        c->bstate->btype == BLOCKED_WAIT ||
-        c->bstate->btype == BLOCKED_SLAB) {
+        c->bstate->btype == BLOCKED_WAIT) {
         return 1;
     }
     return 0;
@@ -362,6 +365,10 @@ void disconnectOrRedirectAllBlockedClients(void) {
             /* BLOCKED_INUSE clients will reprocess their command when unblocked
              * by the caller. Sending error replies here would be incorrect. */
             if (c->bstate->btype == BLOCKED_INUSE) continue;
+
+            /* A slab read off the main thread answers from the snapshot taken when the
+             * command ran, so it is completed like any read that already executed. */
+            if (c->bstate->btype == BLOCKED_SLAB && c->bstate->slab_task) continue;
 
             if (server.cluster_enabled) {
                 if (clusterRedirectBlockedClientIfNeeded(c))

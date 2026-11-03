@@ -611,6 +611,7 @@ ENGINE_SERVER_OBJ = \
     slab_block.o \
     slab_fence.o \
     slab_maint.o \
+    slab_read.o \
     slab_tree.o \
     slab_vlog.o \
     socket.o \

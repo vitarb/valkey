@@ -364,7 +364,7 @@ typedef enum blocking_type {
     BLOCKED_POSTPONE, /* Blocked by processCommand, re-try processing later. */
     BLOCKED_SHUTDOWN, /* SHUTDOWN. */
     BLOCKED_INUSE,    /* Key in use by background thread. */
-    BLOCKED_SLAB,     /* SLFLUSH / SLCOMPACT WAIT for slab maintenance. */
+    BLOCKED_SLAB,     /* Slab collection: WAIT for maintenance, or a read off the main thread. */
     BLOCKED_NUM,      /* Number of blocked states. */
     BLOCKED_END       /* End of enumeration */
 } blocking_type;
@@ -1068,6 +1068,9 @@ typedef struct blockingState {
     void *async_rm_call_handle; /* ValkeyModuleAsyncRMCallPromise structure.
                                    which is opaque for the Redis core, only
                                    handled in module.c. */
+
+    /* BLOCKED_SLAB: the read in flight off the main thread, if any (slab_read.c). */
+    void *slab_task;
 } blockingState;
 
 /* The following structure represents a node in the server.ready_keys list,
@@ -3901,9 +3904,11 @@ bool slabTypeSnapshotForSave(robj *o, struct slabSnapshot *s);
 void slabTypePinForIteration(robj *o);
 void slabTypeUnpinForIteration(robj *o);
 void slabUnblockClient(client *c);
+bool slabBlockedClientMayTimeout(client *c);
 void slabReplyToBlockedClientTimedOut(client *c);
 void slabInitServer(void);
 void slabBeforeSleep(void);
+bool slabReadHasDeferred(void);
 void slabKillThreads(void);
 sds genSlabInfoString(sds info, bool debug);
 bool slabDebugCommand(client *c);

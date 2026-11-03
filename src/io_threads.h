@@ -35,11 +35,26 @@ typedef enum {
     JOB_RES_CLUSTER_READ,
     JOB_RES_CLUSTER_WRITE,
     JOB_RES_CLUSTER_ACCEPT,
+    JOB_RES_RESULT,
     JOB_RES_COUNT
 } JobResult;
 static_assert(JOB_RES_COUNT <= 8, "JOB_RES_COUNT must not exceed 8 for pointer arithmetic");
 
 typedef void (*job_handler)(void *);
+
+/* A long job an IO thread runs in bounded steps: one step per pass of its loop, after
+ * its client jobs, so the job delays the clients of that thread by at most one step.
+ * The job stays on the thread that took it. */
+typedef struct ioStepJob {
+    /* Runs one step; returns 0 when the job is done, after which the thread no longer
+     * touches it. */
+    int (*step)(struct ioStepJob *job);
+} ioStepJob;
+
+/* A result an IO thread hands to the main thread, which calls 'handler' with it. */
+typedef struct ioResult {
+    void (*handler)(struct ioResult *r);
+} ioResult;
 
 void initIOThreads(int prev_threads_num);
 void killIOThreads(void);
@@ -48,6 +63,11 @@ int trySendReadToIOThreads(client *c);
 int trySendWriteToIOThreads(client *c);
 int tryOffloadFreeObjToIOThreads(robj *o);
 int tryOffloadFreeArgvToIOThreads(client *c, int argc, robj **argv);
+int trySendStepJobToIOThreads(ioStepJob *job);
+void ioThreadsWantActive(void);
+void ioThreadsExpectResult(void);
+void ioThreadsCancelExpectedResult(void);
+void sendResultToMainThread(ioResult *r);
 void IOThreadsAfterSleep(int numevents);
 void IOThreadsBeforeSleep(long long current_time);
 void drainIOThreadsQueue(void);

@@ -2143,6 +2143,9 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         }
     }
 
+    /* A slab read completion waiting for an IO thread's write is retried next loop. */
+    if (slabReadHasDeferred()) dont_sleep = 1;
+
     /* Don't sleep at all before the next beforeSleep() if needed (e.g. a
      * connection has pending data) */
     aeSetDontWait(server.el, dont_sleep);

@@ -1,6 +1,12 @@
 # Slab collections: commands, keyspace integration and the consistency rules that
 # hold without background threads.
 
+# Large reads go to IO threads here (always active, so every large read does);
+# slab-inline.tcl runs this file again with one IO thread and no maintenance threads,
+# and its overrides come later, so they win.
+set slab_saved_overrides_slab $::global_overrides
+set ::global_overrides [concat {io-threads 3 io-threads-always-active yes} $::global_overrides]
+
 # Writes n entries "k<i>" -> "v<i>:<tag>" in batches of 100.
 proc slab_fill {coll n tag {prefix k}} {
     for {set i 0} {$i < $n} {incr i 100} {
@@ -604,3 +610,5 @@ start_server {tags {slab "external:skip" defrag} overrides {save {}}} {
         } {} {needs:debug}
     }
 }
+
+set ::global_overrides $slab_saved_overrides_slab

@@ -47,6 +47,16 @@ static spmcQueue io_shared_inbox[JOB_PRIORITY_COUNT] = {0};
 static mpscQueue io_shared_outbox[JOB_PRIORITY_COUNT] = {0};
 // Main -> IO (Thread-Specific) for tasks that must run on specific IO thread where IO threads check their private inbox before the shared queue
 static spscQueue io_private_inbox[IO_THREADS_MAX_NUM] = {0};
+// Main -> IO: long jobs run in steps (ioStepJob), taken by any IO thread
+static spmcQueue io_step_inbox = {0};
+/* Step jobs sent (main thread) and finished (IO threads): the ones in flight count as
+ * load for scaling, since a thread holding one is busy though no queue shows it. */
+static size_t io_step_jobs_submitted;
+static _Atomic size_t io_step_jobs_finished;
+/* Work an IO thread would take arrived while none was active (ioThreadsWantActive). */
+static int io_activation_wanted;
+/* Results (ioResult) the main thread expects from IO threads and has not handled yet. */
+static size_t io_results_pending;
 static size_t io_jobs_submitted;
 /* Every IO thread adds to io_jobs_finished after each busy loop iteration. The wrapper gives
  * it a cache line of its own, so those updates don't invalidate the line holding the
@@ -115,8 +125,13 @@ static size_t getPendingIOThreadsJobs(void) {
 }
 
 /* Read/write jobs awaiting response from IO threads. */
+static size_t stepJobsInFlight(void) {
+    return io_step_jobs_submitted - atomic_load_explicit(&io_step_jobs_finished, memory_order_relaxed);
+}
+
 static size_t getPendingIOResponsesCount(void) {
-    return server.stat_io_writes_pending + server.stat_io_reads_pending + cluster_io_pending_responses;
+    return server.stat_io_writes_pending + server.stat_io_reads_pending + cluster_io_pending_responses +
+           io_results_pending;
 }
 
 /* Drains the I/O threads queue by waiting for all jobs to be processed.
@@ -210,8 +225,11 @@ void IOThreadsAfterSleep(int numevents) {
     if (server.active_io_threads_num == 1) {
         int should_ignite = 0;
         float main_thread_active_time = (float)getInstantaneousMetric(STATS_METRIC_MAIN_THREAD_ACTIVE_TIME) / 10000.0;
-        /* Ignite IO threads when main-thread active time exceeds the threshold (30%) */
-        should_ignite = (main_thread_active_time > (float)IO_IGNITION_MAIN_THREAD_ACTIVE_PERCENT);
+        /* Ignite IO threads when main-thread active time exceeds the threshold (30%), or
+         * when work meant for them arrived (see ioThreadsWantActive). */
+        should_ignite = (main_thread_active_time > (float)IO_IGNITION_MAIN_THREAD_ACTIVE_PERCENT) ||
+                        io_activation_wanted;
+        io_activation_wanted = 0;
         if (should_ignite) {
             pthread_mutex_unlock(&io_threads_mutex[1]);
             server.active_io_threads_num++;
@@ -219,6 +237,19 @@ void IOThreadsAfterSleep(int numevents) {
             serverLog(LL_DEBUG, "IO threads ignition: increased to %d", server.active_io_threads_num);
         }
         return;
+    }
+
+    /* Step jobs are long by design: give each one in flight a thread now rather than one
+     * more thread per sampling window, or a burst of large reads queues behind a single
+     * thread while the pool ramps up. Scaling down keeps its cooldown. */
+    size_t steps_wanted = stepJobsInFlight() + 1;
+    if (steps_wanted > (size_t)server.io_threads_num) steps_wanted = server.io_threads_num;
+    if (steps_wanted > (size_t)server.active_io_threads_num) {
+        for (size_t i = server.active_io_threads_num; i < steps_wanted; i++) pthread_mutex_unlock(&io_threads_mutex[i]);
+        serverLog(LL_DEBUG, "IO threads increased from %d to %zu for step jobs", server.active_io_threads_num,
+                  steps_wanted);
+        server.active_io_threads_num = (int)steps_wanted;
+        last_scale_time = now;
     }
 
     static mstime_t last_sample_time = 0;
@@ -231,6 +262,8 @@ void IOThreadsAfterSleep(int numevents) {
 
     spmc_size_sum += spmcSize(&io_shared_inbox[JOB_PRIORITY_NORMAL]);
     spmc_size_sum += spmcSize(&io_shared_inbox[JOB_PRIORITY_HIGH]);
+    size_t steps_in_flight = stepJobsInFlight();
+    spmc_size_sum += steps_in_flight;
     sample_count++;
 
     trackInstantaneousMetric(STATS_METRIC_IO_WAIT, spmc_size_sum, sample_count, 1);
@@ -265,7 +298,9 @@ void IOThreadsAfterSleep(int numevents) {
         /* Don't suspend if work remains in the specific thread's queue... */
         if (!spscIsEmpty(&io_private_inbox[tid])) return;
         /* ...or if we are dropping to 1 thread but the global queue still has work */
-        if (target == 1 && (!spmcIsEmpty(&io_shared_inbox[JOB_PRIORITY_NORMAL]) || !spmcIsEmpty(&io_shared_inbox[JOB_PRIORITY_HIGH]))) return;
+        if (target == 1 && (!spmcIsEmpty(&io_shared_inbox[JOB_PRIORITY_NORMAL]) || !spmcIsEmpty(&io_shared_inbox[JOB_PRIORITY_HIGH]) ||
+                            steps_in_flight))
+            return;
 
         pthread_mutex_lock(&io_threads_mutex[tid]);
         server.active_io_threads_num--;
@@ -386,7 +421,8 @@ static void *IOThreadMain(void *myid) {
     pthread_cleanup_push(cleanupThreadResources, NULL);
 
     void *batch_jobs[BATCH_SIZE];
-    int processed = 0;
+    int processed = 0, stepped = 0;
+    ioStepJob *step_job = NULL; /* the long job this thread is running, one step per pass */
     monotime work_start_time = 0;
     while (1) {
         /* Cancellation point so that pthread_cancel() from main thread is honored. */
@@ -394,12 +430,13 @@ static void *IOThreadMain(void *myid) {
         size_t batch_count = 0;
         monotime prev_work_start_time = work_start_time;
         work_start_time = getMonotonicUs();
-        if (processed != 0) {
+        if (processed != 0 || stepped) {
             atomic_fetch_add_explicit(&used_active_time_io_thread[id].value,
                                       work_start_time - prev_work_start_time,
                                       memory_order_relaxed);
         }
         processed = 0;
+        stepped = 0;
         /* PRIORITY 1: Drain Private SPSC Queue (Batch Processing) */
         while ((batch_count = spscDequeueBatch(&io_private_inbox[id], batch_jobs, BATCH_SIZE)) > 0) {
             for (size_t i = 0; i < batch_count; i++) {
@@ -434,16 +471,31 @@ static void *IOThreadMain(void *myid) {
             processed++;
         }
 
+        /* PRIORITY 3: One step of a long job. */
+        if (step_job == NULL) step_job = spmcDequeue(&io_step_inbox);
+        if (step_job != NULL) {
+            stepped = 1;
+            if (!step_job->step(step_job)) {
+                step_job = NULL;
+                processed++;
+                atomic_fetch_add_explicit(&io_step_jobs_finished, 1, memory_order_relaxed);
+            }
+        }
+
         if (processed) {
             atomic_fetch_add_explicit(&io_jobs_finished.value, processed, memory_order_release);
         }
 
-        /* If both queues were empty (no processing done), wait for signal. */
-        if (processed == 0) {
-            int has_pending = 0;
-            for (int p = 0; p < JOB_PRIORITY_COUNT; p++) {
-                if (pending_io_responses[p]) has_pending = 1;
-            }
+        int has_pending = 0;
+        for (int p = 0; p < JOB_PRIORITY_COUNT; p++) {
+            if (pending_io_responses[p]) has_pending = 1;
+        }
+        /* A thread stepping a long job is never idle: hand over the responses parked
+         * when the outbox was full on every pass. */
+        if (unlikely(has_pending) && stepped) flushPendingIOResponses(0);
+
+        /* If every queue was empty (no processing done), wait for signal. */
+        if (processed == 0 && !stepped) {
             if (unlikely(has_pending)) {
                 flushPendingIOResponses(0);
             } else {
@@ -611,6 +663,10 @@ void initIOThreads(int prev_threads_num) {
             spmcInit(&io_shared_inbox[p], IO_SPMC_QUEUE_SIZE);
             mpscInit(&io_shared_outbox[p], IO_MPSC_QUEUE_SIZE);
         }
+        spmcInit(&io_step_inbox, IO_SPMC_QUEUE_SIZE);
+        io_results_pending = 0;
+        io_step_jobs_submitted = 0;
+        atomic_store_explicit(&io_step_jobs_finished, 0, memory_order_relaxed);
         io_jobs_submitted = 0;
         atomic_init(&io_jobs_finished.value, 0);
         cluster_io_pending_responses = 0;
@@ -636,6 +692,11 @@ void testOnlyInitIOThreadQueues(void) {
         mpscInit(&io_shared_outbox[p], IO_MPSC_QUEUE_SIZE);
         io_thread_ticket[p] = (mpscTicket){0};
     }
+    if (io_step_inbox.buffer) spmcFree(&io_step_inbox);
+    spmcInit(&io_step_inbox, IO_SPMC_QUEUE_SIZE);
+    io_results_pending = 0;
+    io_step_jobs_submitted = 0;
+    atomic_store_explicit(&io_step_jobs_finished, 0, memory_order_relaxed);
     io_jobs_submitted = 0;
     atomic_store_explicit(&io_jobs_finished.value, 0, memory_order_relaxed);
     cluster_io_pending_responses = 0;
@@ -651,6 +712,10 @@ void testOnlyFreeIOThreadQueues(void) {
         mpscFree(&io_shared_outbox[p]);
         io_thread_ticket[p] = (mpscTicket){0};
     }
+    spmcFree(&io_step_inbox);
+    io_results_pending = 0;
+    io_step_jobs_submitted = 0;
+    atomic_store_explicit(&io_step_jobs_finished, 0, memory_order_relaxed);
     io_jobs_submitted = 0;
     atomic_store_explicit(&io_jobs_finished.value, 0, memory_order_relaxed);
     cluster_io_pending_responses = 0;
@@ -1074,6 +1139,41 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
     return C_OK;
 }
 
+/* Queues a long job for the IO threads, which run it in steps (see ioStepJob).
+ * Returns C_ERR if no IO thread is active or the queue is full: the caller then runs
+ * the job itself. */
+int trySendStepJobToIOThreads(ioStepJob *job) {
+    if (server.active_io_threads_num <= 1) return C_ERR;
+    if (unlikely(spmcEnqueue(&io_step_inbox, job) == false)) return C_ERR;
+    io_jobs_submitted++;
+    io_step_jobs_submitted++;
+    return C_OK;
+}
+
+/* Main thread: work an IO thread would take arrived while none was active (and was
+ * done inline). Activates the first IO thread after this event loop iteration, as a
+ * busy main thread does; scaling then follows the step jobs in flight. */
+void ioThreadsWantActive(void) {
+    if (server.io_threads_num > 1 && server.active_io_threads_num == 1) io_activation_wanted = 1;
+}
+
+/* Main thread: an IO thread will hand over one result (sendResultToMainThread). Until
+ * it is handled, the main thread keeps polling for responses instead of sleeping. */
+void ioThreadsExpectResult(void) {
+    io_results_pending++;
+}
+
+/* Main thread: an expected result was produced on the main thread itself and handled
+ * there. */
+void ioThreadsCancelExpectedResult(void) {
+    serverAssert(io_results_pending > 0);
+    io_results_pending--;
+}
+
+void sendResultToMainThread(ioResult *r) {
+    sendToMainThread(r, JOB_RES_RESULT);
+}
+
 /* This function retrieves the results of the IO Thread poll.
  * returns the number of fired events if the IO thread has finished processing poll events, 0 otherwise. */
 static int getIOThreadPollResults(aeEventLoop *eventLoop) {
@@ -1307,6 +1407,11 @@ static int processOutboxBatch(mpscQueue *outbox) {
                 cluster_io_pending_responses--;
                 server.stat_cluster_threaded_accepts_processed++;
                 clusterHandleAcceptCompletion((connection *)data);
+            } else if (job_type == JOB_RES_RESULT) {
+                serverAssert(io_results_pending > 0);
+                io_results_pending--;
+                ioResult *r = data;
+                r->handler(r);
             } else {
                 serverPanic("Unknown job type %d", job_type);
             }
