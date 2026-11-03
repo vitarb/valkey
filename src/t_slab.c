@@ -66,12 +66,96 @@ void slabTypeDigest(unsigned char *digest, robj *o) {
     slabIterFree(it);
 }
 
-/* AOF rewrite: slab collections are not persisted yet. */
+/* The snapshot a save reads (RDB, AOF rewrite, DUMP, slot migration). On the main
+ * thread, including a fork child, which is an image of it, that is the published
+ * state. A forkless save runs on another thread and reads the View pinned on the main
+ * thread when bgiteration handed the key out; it never loads the published pointer
+ * itself, which an install may be replacing. */
+bool slabTypeSnapshotForSave(robj *o, slabSnapshot *s) {
+    slabColl *c = objectGetVal(o);
+    if (!onServerMainThread()) {
+        if (slabPinnedSnapshot(c, s)) return true;
+        /* Unpinned off the main thread: a module thread holding the GIL (DUMP or DEBUG
+         * OBJECT through the module API). The main thread cannot install meanwhile, so
+         * the published state is as stable as on the main thread. */
+        slabSnapshotTake(c, s, false);
+        return true;
+    }
+    /* A fork child whose parent had an in-place publication running at fork time. */
+    if (server.in_fork_child && !slabForkImageVerified()) return false;
+    slabSnapshotTake(c, s, false);
+    return true;
+}
+
+void slabTypePinForIteration(robj *o) {
+    slabPinForIteration(objectGetVal(o));
+}
+
+void slabTypeUnpinForIteration(robj *o) {
+    slabUnpinForIteration(objectGetVal(o));
+}
+
+#define AOF_SLAB_BATCH_PAIRS 1000
+#define AOF_SLAB_BATCH_BYTES (4 * 1024 * 1024)
+
+static int rioWriteArgv(rio *r, robj **argv, int argc) {
+    if (rioWriteBulkCount(r, '*', argc) == 0) return 0;
+    for (int j = 0; j < argc; j++) {
+        sds a = objectGetVal(argv[j]);
+        if (rioWriteBulkString(r, a, sdslen(a)) == 0) return 0;
+    }
+    return 1;
+}
+
+/* AOF rewrite (and atomic slot migration): SLCREATE key NX with every option, then
+ * the live entries as SLMSET batches of at most AOF_SLAB_BATCH_PAIRS pairs or
+ * AOF_SLAB_BATCH_BYTES. Returns 0 on error. */
 int rewriteSlabObject(rio *r, robj *key, robj *o) {
-    UNUSED(r);
-    UNUSED(o);
-    serverLog(LL_WARNING, "Can't rewrite slab collection '%s': not supported yet", (char *)objectGetVal(key));
-    return 0;
+    slabSnapshot s;
+    if (!slabTypeSnapshotForSave(o, &s)) {
+        serverLog(LL_WARNING, "Can't rewrite a slab collection: its state in this process is not verified");
+        return 0;
+    }
+    robj *argv[SLAB_CREATE_ARGV_MAX];
+    int argc = slabCreateArgv(key, slabSnapshotConfig(&s), argv);
+    int ok = rioWriteArgv(r, argv, argc);
+    for (int j = 0; j < argc; j++) decrRefCount(argv[j]);
+    if (!ok) return 0;
+
+    slabIter *it = slabIterCreate(&s, NULL, 0, true);
+    sds keys[AOF_SLAB_BATCH_PAIRS];
+    const unsigned char *vals[AOF_SLAB_BATCH_PAIRS];
+    size_t vlens[AOF_SLAB_BATCH_PAIRS];
+    int n = 0;
+    size_t bytes = 0;
+    const unsigned char *k, *v;
+    size_t kl, vl;
+    bool more = true;
+    sds keystr = objectGetVal(key);
+    while (ok && more) {
+        more = slabIterNext(it, &k, &kl, &v, &vl);
+        if (more) {
+            /* Values stay valid while the snapshot does; keys live in the iterator. */
+            keys[n] = sdsnewlen(k, kl);
+            vals[n] = v;
+            vlens[n] = vl;
+            n++;
+            bytes += kl + vl;
+        }
+        if (n && (!more || n == AOF_SLAB_BATCH_PAIRS || bytes >= AOF_SLAB_BATCH_BYTES)) {
+            ok = rioWriteBulkCount(r, '*', 2 + 2 * n) && rioWriteBulkString(r, "SLMSET", 6) &&
+                 rioWriteBulkString(r, keystr, sdslen(keystr));
+            for (int j = 0; j < n; j++) {
+                if (ok) ok = rioWriteBulkString(r, keys[j], sdslen(keys[j])) && rioWriteBulkString(r, (const char *)vals[j], vlens[j]);
+                sdsfree(keys[j]);
+            }
+            n = 0;
+            bytes = 0;
+        }
+    }
+    for (int j = 0; j < n; j++) sdsfree(keys[j]);
+    slabIterFree(it);
+    return ok;
 }
 
 /* ---------------------------------------------------------------------------------------

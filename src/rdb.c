@@ -34,6 +34,8 @@
 
 #include "hashtable.h"
 #include "server.h"
+#include "slab.h"
+#include "slab_block.h"
 #include "ordered_index.h"
 #include "lzf.h" /* LZF compression library */
 #include "zipmap.h"
@@ -797,8 +799,11 @@ int rdbGetObjectType(robj *o, int rdbver) {
             return RDB_TYPE_PATH_HASH;
         else
             return -1; /* can't be stored in old RDB */
-    /* Not persisted yet. */
-    case OBJ_SLAB: return -1;
+    case OBJ_SLAB:
+        if (rdbver >= 82)
+            return RDB_TYPE_SLAB;
+        else
+            return -1; /* can't be stored in old RDB */
     case OBJ_MODULE: return RDB_TYPE_MODULE_2;
     default: serverPanic("Unknown object type");
     }
@@ -916,6 +921,190 @@ ssize_t rdbSaveStreamConsumers(rio *rdb, streamCG *cg) {
 
 /* Save an Object.
  * Returns -1 on error, number of bytes written on success. */
+/* Slab collections (RDB_TYPE_SLAB):
+ *
+ *   len format (1)
+ *   len n; n x (len option id, len value)
+ *   len leaves; leaves x (string lower bound, len + raw base block, len + raw delta
+ *                         segment, length 0 for none)
+ *   len pending; pending x (string key, len kind (0 put, 1 tombstone), [string value])
+ *   len "SLAB"
+ *
+ * Blocks are written raw: they are prefix-compressed already and LZF would spend save
+ * time on them. The load validates every block and bound (slabImportLeaf). */
+#define RDB_SLAB_FORMAT 1
+#define RDB_SLAB_END 0x534c4142
+
+static ssize_t rdbSaveSlabObject(rio *rdb, robj *o) {
+    slabSnapshot s;
+    if (!slabTypeSnapshotForSave(o, &s)) {
+        serverLog(LL_WARNING, "Can't save a slab collection: its state in this process is not verified");
+        return -1;
+    }
+    ssize_t n, nwritten = 0;
+    uint64_t ids[SLAB_CONFIG_PAIRS], vals[SLAB_CONFIG_PAIRS];
+    int npairs = slabConfigToPairs(slabSnapshotConfig(&s), ids, vals);
+    if ((n = rdbSaveLen(rdb, RDB_SLAB_FORMAT)) == -1) return -1;
+    nwritten += n;
+    if ((n = rdbSaveLen(rdb, npairs)) == -1) return -1;
+    nwritten += n;
+    for (int i = 0; i < npairs; i++) {
+        if ((n = rdbSaveLen(rdb, ids[i])) == -1) return -1;
+        nwritten += n;
+        if ((n = rdbSaveLen(rdb, vals[i])) == -1) return -1;
+        nwritten += n;
+    }
+    slabExport *e = slabExportBegin(&s);
+    uint64_t leaves = slabExportLeafCount(e);
+    if ((n = rdbSaveLen(rdb, leaves)) == -1) goto fail;
+    nwritten += n;
+    for (uint64_t i = 0; i < leaves; i++) {
+        const unsigned char *lower, *base;
+        size_t lower_len, base_len, delta_len;
+        unsigned char *delta;
+        slabExportLeaf(e, i, &lower, &lower_len, &base, &base_len, &delta, &delta_len);
+        int err = (n = rdbSaveRawString(rdb, (unsigned char *)lower, lower_len)) == -1;
+        nwritten += err ? 0 : n;
+        if (!err) err = (n = rdbSaveLen(rdb, base_len)) == -1 || rdbWriteRaw(rdb, (void *)base, base_len) == -1;
+        nwritten += err ? 0 : n + base_len;
+        if (!err) err = (n = rdbSaveLen(rdb, delta_len)) == -1 || (delta_len && rdbWriteRaw(rdb, delta, delta_len) == -1);
+        nwritten += err ? 0 : n + delta_len;
+        zfree(delta);
+        if (err) goto fail;
+    }
+    if ((n = rdbSaveLen(rdb, slabExportPendingCount(e))) == -1) goto fail;
+    nwritten += n;
+    const unsigned char *k, *v;
+    size_t kl, vl;
+    while (slabExportPendingNext(e, &k, &kl, &v, &vl)) {
+        if ((n = rdbSaveRawString(rdb, (unsigned char *)k, kl)) == -1) goto fail;
+        nwritten += n;
+        if ((n = rdbSaveLen(rdb, v ? 0 : 1)) == -1) goto fail;
+        nwritten += n;
+        if (v) {
+            if ((n = rdbSaveRawString(rdb, (unsigned char *)v, vl)) == -1) goto fail;
+            nwritten += n;
+        }
+    }
+    slabExportEnd(e);
+    if ((n = rdbSaveLen(rdb, RDB_SLAB_END)) == -1) return -1;
+    return nwritten + n;
+fail:
+    slabExportEnd(e);
+    return -1;
+}
+
+/* Reads a raw block of at most the format's block size; NULL on error. */
+static unsigned char *rdbLoadSlabBlock(rio *rdb, size_t *len) {
+    uint64_t l = rdbLoadLen(rdb, NULL);
+    if (l == RDB_LENERR) return NULL;
+    if (l > SLAB_MAX_BLOCK_BYTES) {
+        rdbReportCorruptRDB("Slab block of %llu bytes exceeds the format limit", (unsigned long long)l);
+        return NULL;
+    }
+    *len = l;
+    unsigned char *buf = ztrymalloc(l ? l : 1);
+    if (!buf) {
+        rdbReportCorruptRDB("Out of memory loading a slab block of %llu bytes", (unsigned long long)l);
+        return NULL;
+    }
+    if (l && rioRead(rdb, buf, l) == 0) {
+        zfree(buf);
+        return NULL;
+    }
+    return buf;
+}
+
+static robj *rdbLoadSlabObject(rio *rdb) {
+    uint64_t fmt = rdbLoadLen(rdb, NULL);
+    if (fmt == RDB_LENERR) return NULL;
+    if (fmt != RDB_SLAB_FORMAT) {
+        rdbReportCorruptRDB("Unknown slab format %llu", (unsigned long long)fmt);
+        return NULL;
+    }
+    slabConfig cfg;
+    slabConfigDefaults(&cfg);
+    uint64_t npairs = rdbLoadLen(rdb, NULL);
+    if (npairs == RDB_LENERR) return NULL;
+    if (npairs > 1024) {
+        rdbReportCorruptRDB("Too many slab options: %llu", (unsigned long long)npairs);
+        return NULL;
+    }
+    while (npairs--) {
+        uint64_t id = rdbLoadLen(rdb, NULL), val;
+        if (id == RDB_LENERR || (val = rdbLoadLen(rdb, NULL)) == RDB_LENERR) return NULL;
+        if (!slabConfigSetPair(&cfg, id, val)) {
+            rdbReportCorruptRDB("Unknown slab option id %llu", (unsigned long long)id);
+            return NULL;
+        }
+    }
+    const char *err = slabConfigValidate(&cfg);
+    if (err) {
+        rdbReportCorruptRDB("Invalid slab options: %s", err);
+        return NULL;
+    }
+    slabImport *im = slabImportBegin(&cfg);
+    uint64_t leaves = rdbLoadLen(rdb, NULL);
+    if (leaves == RDB_LENERR) goto fail;
+    while (leaves--) {
+        size_t lower_len, base_len, delta_len = 0;
+        unsigned char *lower = rdbGenericLoadStringObject(rdb, RDB_LOAD_PLAIN, &lower_len);
+        if (!lower) goto fail;
+        unsigned char *base = rdbLoadSlabBlock(rdb, &base_len);
+        unsigned char *delta = base ? rdbLoadSlabBlock(rdb, &delta_len) : NULL;
+        if (!base || !delta) {
+            zfree(lower);
+            zfree(base);
+            goto fail;
+        }
+        if (delta_len == 0) {
+            zfree(delta);
+            delta = NULL;
+        }
+        err = slabImportLeaf(im, lower, lower_len, base, base_len, delta, delta_len);
+        zfree(lower);
+        if (err) {
+            zfree(base);
+            zfree(delta);
+            rdbReportCorruptRDB("Invalid slab leaf: %s", err);
+            goto fail;
+        }
+    }
+    uint64_t pending = rdbLoadLen(rdb, NULL);
+    if (pending == RDB_LENERR) goto fail;
+    while (pending--) {
+        size_t kl, vl = 0;
+        unsigned char *k = rdbGenericLoadStringObject(rdb, RDB_LOAD_PLAIN, &kl), *v = NULL;
+        if (!k) goto fail;
+        uint64_t kind = rdbLoadLen(rdb, NULL);
+        if (kind == 0) v = rdbGenericLoadStringObject(rdb, RDB_LOAD_PLAIN, &vl);
+        if (kind == RDB_LENERR || kind > 1 || (kind == 0 && !v)) {
+            if (kind != RDB_LENERR && kind > 1) rdbReportCorruptRDB("Invalid slab pending entry kind");
+            zfree(k);
+            goto fail;
+        }
+        err = slabImportPending(im, k, kl, v, vl, kind == 1);
+        zfree(k);
+        zfree(v);
+        if (err) {
+            rdbReportCorruptRDB("Invalid slab pending entry: %s", err);
+            goto fail;
+        }
+    }
+    uint64_t end = rdbLoadLen(rdb, NULL);
+    if (end != RDB_SLAB_END) {
+        if (end != RDB_LENERR) rdbReportCorruptRDB("Missing slab end marker");
+        goto fail;
+    }
+    slabColl *coll = slabImportFinish(im, &err);
+    robj *o = createObject(OBJ_SLAB, coll);
+    o->encoding = OBJ_ENCODING_SLAB;
+    return o;
+fail:
+    slabImportAbort(im);
+    return NULL;
+}
+
 ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid, unsigned char rdbtype) {
     ssize_t n = 0, nwritten = 0;
     if (objectGetType(o) == OBJ_STRING) {
@@ -1215,6 +1404,9 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid, unsigned char rdbt
             }
             raxStop(&ri);
         }
+    } else if (objectGetType(o) == OBJ_SLAB) {
+        if ((n = rdbSaveSlabObject(rdb, o)) == -1) return -1;
+        nwritten += n;
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         pathHashObject *path_hash = objectGetVal(o);
         if ((n = rdbSaveLen(rdb, raxSize(path_hash->index))) == -1) return -1;
@@ -2575,6 +2767,9 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error, int rd
             if (error) *error = RDB_LOAD_ERR_ALL_ITEMS_EXPIRED;
             return NULL;
         }
+    } else if (rdbtype == RDB_TYPE_SLAB) {
+        o = rdbLoadSlabObject(rdb);
+        if (o == NULL) return NULL;
     } else if (rdbtype == RDB_TYPE_PATH_HASH) {
         uint64_t path_count = rdbLoadLen(rdb, NULL);
         if (path_count == RDB_LENERR) return NULL;

@@ -166,6 +166,27 @@ start_server {tags {"repl needs:other-server external:skip"}} {
             assert_equal [list value] [$old_replica phget pathhash path field]
         }
     }
+
+    test "Old pre-slab replica can't sync but doesn't prevent new replica from sync" {
+        if {[version_greater_or_equal $old_replica_version 10.0.0]} {
+            skip "Replica $old_replica_version does support slab collections"
+        }
+        r flushall
+        r slmset slabcoll k v
+        start_server {start-other-server 1 config "minimal.conf"} {
+            set old_replica [srv 0 client]
+            start_server {} {
+                set new_replica [srv 0 client]
+                $old_replica replicaof $primary_host $primary_port
+                $new_replica replicaof $primary_host $primary_port
+                wait_for_sync $new_replica 500 100
+                wait_for_log_messages -2 [list {*Can't store key 'slabcoll'*}] 0 50 100
+                assert_equal v [$new_replica slget slabcoll k]
+                assert_match {*master_link_status:up*} [$new_replica info replication]
+                assert_match {*master_link_status:down*} [$old_replica info replication]
+            }
+        }
+    }
 }
 
 # Listpacks store, after each element, the length of that element, so that the

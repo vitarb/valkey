@@ -8,6 +8,7 @@ lappend ::global_overrides slab-maintenance-threads 0
 lappend ::denytags slab:threads
 
 source tests/unit/type/slab.tcl
+source tests/unit/type/slab-persistence.tcl
 
 set ::global_overrides $slab_saved_overrides
 set ::denytags $slab_saved_denytags
