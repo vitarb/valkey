@@ -13,6 +13,7 @@
 #include "slab.h"
 #include "slab_block.h"
 #include "slab_hash.h"
+#include "slab_read.h"
 
 #include <math.h>
 
@@ -209,6 +210,7 @@ static void replyToWaiter(slabWaiter *w, bool timedout) {
 /* Applies finished maintenance and answers the clients waiting for it. Main thread:
  * from the wake pipe and from beforeSleep (a backstop). */
 void slabBeforeSleep(void) {
+    slabReadBeforeSleep();
     slabMaintDrain();
     if (!slab_waiters || listLength(slab_waiters) == 0) return;
     listIter li;
@@ -238,6 +240,12 @@ void slabReplyToBlockedClientTimedOut(client *c) {
             return;
         }
     }
+}
+
+/* Whether 'c' waits in SLFLUSH or SLCOMPACT WAIT, which may time out or be unblocked;
+ * a read off the main thread may not. */
+bool slabBlockedClientMayTimeout(client *c) {
+    return c->bstate->slab_task == NULL;
 }
 
 /* DEBUG SLAB <subcommand>: verification and test hooks. Returns false for an unknown
@@ -276,6 +284,10 @@ bool slabDebugCommand(client *c) {
         slabMaintSetSectionHold(true);
     } else if (!strcasecmp(sub, "release-sections") && c->argc == 3) {
         slabMaintSetSectionHold(false);
+    } else if (!strcasecmp(sub, "hold-reads") && c->argc == 3) {
+        slabReadSetHold(true);
+    } else if (!strcasecmp(sub, "release-reads") && c->argc == 3) {
+        slabReadSetHold(false);
     } else {
         return false;
     }
@@ -293,7 +305,7 @@ sds genSlabInfoString(sds info, bool debug) {
                             "slab_writes_rejected_busy:%lld\r\n",
                             slabMaintThreads(), slab_waiters ? listLength(slab_waiters) : 0,
                             server.stat_slab_writes_rejected_busy);
-        return info;
+        return slabReadInfo(info, false);
     }
     uint64_t units, installs, fork_waits, fork_timeouts, reclaimed;
     long long fork_wait_total, fork_wait_max;
@@ -314,11 +326,12 @@ sds genSlabInfoString(sds info, bool debug) {
                         (unsigned long long)fork_waits, fork_wait_total, fork_wait_max, (unsigned long long)fork_timeouts,
                         slabMaintSectionsHeld(),
                         server.stat_slab_admission_bypassed);
-    return info;
+    return slabReadInfo(info, true);
 }
 
 /* unblockClient() for BLOCKED_SLAB: also runs when a waiting client disconnects. */
 void slabUnblockClient(client *c) {
+    slabReadClientGone(c);
     listIter li;
     listNode *ln;
     listRewind(slab_waiters, &li);
@@ -780,10 +793,14 @@ static void replyMultiGet(client *c, slabColl *coll, int first, int count) {
     }
 }
 
-/* SLMGET key k [k ...] */
+/* SLMGET key k [k ...]: large batches off the main thread, the rest inline. */
 void slmgetCommand(client *c) {
     slabColl *coll = lookupCollRead(c, c->argv[1], NULL);
     if (coll == WRONGTYPE) return;
+    if (coll && slabReadAsync(c, (size_t)(c->argc - 2))) {
+        slabReadDispatchMget(c, coll, 2, c->argc - 2);
+        return;
+    }
     replyMultiGet(c, coll, 2, c->argc - 2);
 }
 
@@ -848,6 +865,11 @@ void slscanCommand(client *c) {
         /* Sorted, shared runs serve later calls; a large active memtable would be
          * sorted privately on every call. */
         slabFreeze(coll);
+    }
+    if (slabReadAsync(c, SIZE_MAX)) {
+        slabReadDispatchScan(c, coll, start, prefix, count, novalues);
+        sdsfree(start);
+        return;
     }
     slabSnapshot s;
     slabSnapshotTake(coll, &s, false);
@@ -917,6 +939,11 @@ void slcountCommand(client *c) {
     }
     if (!exact) {
         addReplyLongLong(c, (long long)slabCollCountEstimate(coll));
+        return;
+    }
+    /* O(n): off the main thread where the client can block, else inline. */
+    if (slabReadAsync(c, SIZE_MAX)) {
+        slabReadDispatchCount(c, coll);
         return;
     }
     slabSnapshot s;

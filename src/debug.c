@@ -527,6 +527,8 @@ void debugCommand(client *c) {
             "    Stop slab maintenance threads inside the next section they enter (a fork",
             "    then waits for them up to its limit and its child can't save), or let",
             "    them go on.",
+            "SLAB HOLD-READS|RELEASE-READS",
+            "    Hold slab reads dispatched off the main thread before they run, or let them run again.",
             "SLEEP <seconds>",
             "    Stop the server for <seconds>. Decimals allowed.",
             "STRINGMATCH-TEST",

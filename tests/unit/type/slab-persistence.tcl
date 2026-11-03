@@ -1,5 +1,11 @@
 # Slab collections: RDB, DUMP/RESTORE, AOF and replication.
 
+# Large reads go to IO threads here (always active, so every large read does);
+# slab-inline.tcl runs this file again with one IO thread and no maintenance threads,
+# and its overrides come later, so they win.
+set slab_saved_overrides_slab_persistence $::global_overrides
+set ::global_overrides [concat {io-threads 3 io-threads-always-active yes} $::global_overrides]
+
 proc slab_fill {coll n tag {prefix k}} {
     for {set i 0} {$i < $n} {incr i 100} {
         set args {}
@@ -265,3 +271,5 @@ start_server {tags {slab repl "external:skip"}} {
         } {OK} {needs:debug}
     }
 }
+
+set ::global_overrides $slab_saved_overrides_slab_persistence

@@ -55,7 +55,7 @@ proc slab_fuzz_write {args} {
     return 1
 }
 
-start_server {tags {slab slow "external:skip"} overrides {appendonly yes}} {
+start_server {tags {slab slow "external:skip"} overrides {appendonly yes io-threads 3 io-threads-always-active yes}} {
     start_server {} {
         set replica [srv 0 client]
         set primary [srv -1 client]

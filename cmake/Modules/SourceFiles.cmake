@@ -44,6 +44,7 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/slab_block.c
     ${CMAKE_SOURCE_DIR}/src/slab_fence.c
     ${CMAKE_SOURCE_DIR}/src/slab_maint.c
+    ${CMAKE_SOURCE_DIR}/src/slab_read.c
     ${CMAKE_SOURCE_DIR}/src/slab_tree.c
     ${CMAKE_SOURCE_DIR}/src/slab_vlog.c
     ${CMAKE_SOURCE_DIR}/src/config.c
