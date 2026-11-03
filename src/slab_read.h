@@ -27,5 +27,6 @@ void slabReadBeforeSleep(void);
 void slabReadClientGone(struct client *c);
 sds slabReadInfo(sds info, bool debug);
 void slabReadSetHold(bool hold);
+void slabReadKillThreads(void);
 
 #endif /* SLAB_READ_H */

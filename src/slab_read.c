@@ -19,7 +19,9 @@
  * SLAB_STEP_KEYS keys, each with its own reply chain; up to one runner per active IO
  * thread takes chunks in turn, and the chains are joined in key order. SLSCAN and
  * SLCOUNT EXACT have one runner, which keeps its iterator between steps of
- * SLAB_STEP_VISITS entries. With no IO thread active, reads run inline.
+ * SLAB_STEP_VISITS entries. With slab-query-threads set, dedicated threads run the
+ * runners instead, each to its end. With no IO thread active and no dedicated threads,
+ * reads run inline.
  *
  * Ordering of a reply against pushes. While the read is in flight the client's output
  * goes to its deferred reply buffer, so a tracking invalidation (or a pubsub message)
@@ -30,14 +32,29 @@
  * connection.
  *
  * Completion. The runner that finishes last releases the snapshot and hands the task
- * to the main thread through the IO threads' result queue; the main thread keeps
- * polling while a result is expected. */
+ * to the main thread: through the IO threads' result queue (the main thread keeps
+ * polling while a result is expected), or, from a dedicated thread, through an MPSC
+ * queue and a wake pipe written only if the main thread has not been woken since its
+ * last drain (it clears the flag before it drains, so a task pushed after a drain
+ * found the queue empty sees the flag clear and writes the pipe).
+ *
+ * Dedicated threads. Runners go through an SPMC queue the main thread fills. Parked
+ * threads wait on their own condition variable. A submit wakes one parked thread only
+ * when the queued runners outnumber the awake threads; at beforeSleep the main thread
+ * wakes one parked thread for every queued runner no waking thread is about to take; a
+ * woken thread that takes a runner and still sees work does the same (the pass-on). A
+ * thread counts as waking until it first looks at the queue, so one runner wakes at
+ * most one thread. */
 
 #include "server.h"
 #include "cluster_slot_stats.h"
 #include "io_threads.h"
 #include "slab.h"
 #include "slab_read.h"
+#include "queues.h"
+
+#include <fcntl.h>
+#include <unistd.h>
 
 extern int ProcessingEventsWhileBlocked;
 
@@ -46,6 +63,9 @@ extern int ProcessingEventsWhileBlocked;
 #define SLAB_STEP_KEYS 128          /* SLMGET keys per step */
 #define SLAB_STEP_VISITS 512        /* SLSCAN / SLCOUNT EXACT entries per step */
 #define SLAB_MAX_RUNNERS 8          /* runners of one SLMGET */
+/* Dedicated threads' queue of runners: a power of two, above the in-flight cap times
+ * the runners of one read. */
+#define SLAB_QUEUE_SIZE 8192
 
 typedef enum {
     SLAB_TASK_MGET,
@@ -67,6 +87,7 @@ struct slabReadTask {
     slabSnapshot snap;
     slabTaskKind kind;
     int resp;
+    bool dedicated; /* runs on the dedicated threads */
     /* SLMGET: the keys, copied into one buffer. */
     unsigned char *keybuf;
     size_t *koff; /* nkeys + 1 offsets into keybuf */
@@ -94,20 +115,45 @@ struct slabReadTask {
     _Atomic int finished;
 };
 
+typedef struct slabQueryThread {
+    pthread_t tid;
+    pthread_cond_t cond;
+    bool signaled;
+    int index;
+} slabQueryThread;
+
 static struct {
+    bool started;
+    int nthreads;
+    slabQueryThread *threads;
+    spmcQueue tasks; /* runners */
+    /* Runners submitted and not yet taken. Query threads read this, never the SPMC
+     * queue's producer-side state (spmcIsEmpty and spmcSize are the producer's). Raised
+     * before the enqueue, so it never undercounts the queue. */
+    _Atomic long long queued;
+    mpscQueue done;
+    pthread_mutex_t lock; /* guards the parked stack and 'signaled' */
+    int *parked;          /* stack of parked thread indexes */
+    int nparked;
+    _Atomic int parked_count;
+    _Atomic int waking;
+    int wake_fd[2];
+    _Atomic int wake_pending;
     /* Main thread only. */
     long long inflight;
     list *deferred;   /* completions waiting for an IO thread's write to finish */
     _Atomic int hold; /* DEBUG SLAB HOLD-READS: runners wait instead of stepping */
     /* Counters. */
     long long dispatched, sync_small, sync_context, sync_inflight, sync_no_thread, completions, orphaned;
-} R;
+    _Atomic long long wakes;
+} R = {.wake_fd = {-1, -1}};
 
 static void slabReadComplete(slabReadTask *t);
 static size_t slabReadDrain(void);
+static void finishTask(slabReadTask *t);
 
 /* ---------------------------------------------------------------------------------------
- * Running a task (IO threads, or inline)
+ * Running a task (IO threads, dedicated threads, or inline)
  * ------------------------------------------------------------------------------------- */
 
 /* One chunk of an SLMGET; the first carries the array header. Returns whether chunks
@@ -216,7 +262,10 @@ static int runnerRun(slabReadRunner *rn) {
     /* The snapshot is dropped here; a last View reference goes to the reclaimer. */
     slabSnapshotRelease(&t->snap);
     atomic_store_explicit(&t->finished, 1, memory_order_release);
-    sendResultToMainThread(&t->result);
+    if (t->dedicated)
+        finishTask(t);
+    else
+        sendResultToMainThread(&t->result);
     return 0;
 }
 
@@ -224,6 +273,146 @@ static int runnerRun(slabReadRunner *rn) {
 static int runnerStep(ioStepJob *job) {
     if (atomic_load_explicit(&R.hold, memory_order_relaxed)) return 1;
     return runnerRun((slabReadRunner *)job);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Dedicated threads and wakes
+ * ------------------------------------------------------------------------------------- */
+
+/* Wakes up to 'need' parked threads; caller holds R.lock. */
+static void wakeLocked(long long need) {
+    while (need > 0 && R.nparked > 0) {
+        slabQueryThread *q = &R.threads[R.parked[--R.nparked]];
+        atomic_store(&R.parked_count, R.nparked);
+        atomic_fetch_add(&R.waking, 1);
+        q->signaled = true;
+        pthread_cond_signal(&q->cond);
+        atomic_fetch_add_explicit(&R.wakes, 1, memory_order_relaxed);
+        need--;
+    }
+}
+
+/* Wakes parked threads for queued runners no waking thread is about to take. */
+static void wakeUncovered(void) {
+    pthread_mutex_lock(&R.lock);
+    wakeLocked(atomic_load(&R.queued) - atomic_load(&R.waking));
+    pthread_mutex_unlock(&R.lock);
+}
+
+static void finishTask(slabReadTask *t) {
+    mpscTicket ticket = {0};
+    while (!mpscEnqueue(&R.done, t, &ticket)) sched_yield();
+    /* The push happens-before the flag check; see the file comment. */
+    atomic_thread_fence(memory_order_seq_cst);
+    if (!atomic_exchange(&R.wake_pending, 1)) {
+        ssize_t w = write(R.wake_fd[1], "r", 1);
+        UNUSED(w);
+    }
+}
+
+static void *queryThreadMain(void *arg) {
+    slabQueryThread *self = arg;
+    char name[16];
+    snprintf(name, sizeof(name), "slab_query_%d", self->index);
+    slabThreadSetup(name, server.server_cpulist);
+    bool woken = false;
+    for (;;) {
+        slabReadRunner *rn = spmcDequeue(&R.tasks);
+        if (rn) atomic_fetch_sub(&R.queued, 1);
+        if (woken) {
+            /* No longer about to take a runner: the main thread may wake another. */
+            atomic_fetch_sub(&R.waking, 1);
+            atomic_thread_fence(memory_order_seq_cst);
+            woken = false;
+            if (rn && atomic_load(&R.queued) > 0) wakeUncovered(); /* the pass-on */
+        }
+        if (rn) {
+            while (atomic_load_explicit(&R.hold, memory_order_relaxed)) usleep(1000);
+            while (runnerRun(rn));
+            continue;
+        }
+        /* Park: register first, then take a last look at the queue (Dekker with the
+         * submitting thread's fence). */
+        pthread_mutex_lock(&R.lock);
+        R.parked[R.nparked++] = self->index;
+        atomic_store(&R.parked_count, R.nparked);
+        pthread_mutex_unlock(&R.lock);
+        atomic_thread_fence(memory_order_seq_cst);
+        if (atomic_load(&R.queued) > 0) {
+            pthread_mutex_lock(&R.lock);
+            for (int i = 0; i < R.nparked; i++) {
+                if (R.parked[i] != self->index) continue;
+                R.parked[i] = R.parked[--R.nparked];
+                atomic_store(&R.parked_count, R.nparked);
+                break;
+            }
+            bool signaled = self->signaled;
+            self->signaled = false;
+            pthread_mutex_unlock(&R.lock);
+            woken = signaled; /* someone woke us meanwhile: we count as waking */
+            continue;
+        }
+        pthread_mutex_lock(&R.lock);
+        while (!self->signaled) pthread_cond_wait(&self->cond, &R.lock);
+        self->signaled = false;
+        pthread_mutex_unlock(&R.lock);
+        woken = true;
+    }
+    return NULL;
+}
+
+static void slabReadWakeReadable(aeEventLoop *el, int fd, void *privdata, int mask);
+
+/* The first large read with slab-query-threads set starts the threads and allocates
+ * their queues. If they can't start, reads use the IO threads. */
+static void startThreads(void) {
+    R.started = true;
+    R.nthreads = server.slab_query_threads;
+    if (pipe(R.wake_fd) == -1) goto fail;
+    for (int i = 0; i < 2; i++) {
+        fcntl(R.wake_fd[i], F_SETFL, fcntl(R.wake_fd[i], F_GETFL) | O_NONBLOCK);
+        fcntl(R.wake_fd[i], F_SETFD, FD_CLOEXEC);
+    }
+    if (aeCreateFileEvent(server.el, R.wake_fd[0], AE_READABLE, slabReadWakeReadable, NULL) == AE_ERR) goto fail;
+    pthread_mutex_init(&R.lock, NULL);
+    spmcInit(&R.tasks, SLAB_QUEUE_SIZE);
+    mpscInit(&R.done, SLAB_QUEUE_SIZE);
+    R.threads = zcalloc(R.nthreads * sizeof(slabQueryThread));
+    R.parked = zcalloc(R.nthreads * sizeof(int));
+    int started = 0;
+    for (int i = 0; i < R.nthreads; i++) {
+        R.threads[i].index = i;
+        pthread_cond_init(&R.threads[i].cond, NULL);
+        if (pthread_create(&R.threads[i].tid, NULL, queryThreadMain, &R.threads[i]) != 0) break;
+        started++;
+    }
+    if (started < R.nthreads)
+        serverLog(LL_WARNING, "Started %d of %d slab query threads", started, R.nthreads);
+    /* Threads index the arrays by their own index, so the count only shrinks. */
+    R.nthreads = started;
+    if (started) return;
+fail:
+    serverLog(LL_WARNING, "Can't start the slab query threads: slab reads use the IO threads");
+    R.nthreads = 0;
+}
+
+static void slabReadWakeReadable(aeEventLoop *el, int fd, void *privdata, int mask) {
+    UNUSED(el);
+    UNUSED(fd);
+    UNUSED(privdata);
+    UNUSED(mask);
+    char buf[64];
+    while (read(R.wake_fd[0], buf, sizeof(buf)) > 0) {
+    }
+    /* Inside a busy script or a load, completions wait for the next beforeSleep, like
+     * module unblocks. wake_pending stays set, so no thread writes again. */
+    if (!ProcessingEventsWhileBlocked) slabReadDrain();
+}
+
+/* Started threads, for killThreads() before the crash memory test. */
+void slabReadKillThreads(void) {
+    if (!R.started) return;
+    for (int i = 0; i < R.nthreads; i++) slabThreadKill(R.threads[i].tid, "query");
 }
 
 /* ---------------------------------------------------------------------------------------
@@ -236,7 +425,11 @@ static int runnerStep(ioStepJob *job) {
  * clients never block; during loading the completion path does not run. Either way
  * the reply is the same. */
 bool slabReadAsync(client *c, size_t nkeys) {
-    if (server.active_io_threads_num <= 1) {
+    if (!R.started && server.slab_query_threads > 0) {
+        if (nkeys < SLAB_ASYNC_MIN_KEYS) return false;
+        startThreads();
+    }
+    if (R.nthreads == 0 && server.active_io_threads_num <= 1) {
         /* Runs inline now; the next large read finds an IO thread active. */
         if (nkeys >= SLAB_ASYNC_MIN_KEYS) {
             R.sync_no_thread++;
@@ -299,8 +492,9 @@ static void submit(client *c, slabReadTask *t) {
 
     if (!R.deferred) R.deferred = listCreate();
 
-    /* One runner per active IO thread, up to the chunks (SLMGET) or one. */
-    size_t runners = (size_t)server.active_io_threads_num - 1;
+    /* One runner per thread that can take one, up to the chunks (SLMGET) or one. */
+    t->dedicated = R.nthreads > 0;
+    size_t runners = t->dedicated ? (size_t)R.nthreads : (size_t)server.active_io_threads_num - 1;
     if (runners > SLAB_MAX_RUNNERS) runners = SLAB_MAX_RUNNERS;
     if (runners > t->nchunks) runners = t->nchunks;
     t->nrunners = runners ? (int)runners : 1;
@@ -311,12 +505,30 @@ static void submit(client *c, slabReadTask *t) {
         t->runners[i].task = t;
     }
 
-    ioThreadsExpectResult();
-    /* A runner the IO threads can't take (no active thread left, or a full queue) runs
-     * here; the reply is the same. */
-    for (int i = 0; i < t->nrunners; i++)
-        if (trySendStepJobToIOThreads(&t->runners[i].job) != C_OK)
-            while (runnerRun(&t->runners[i]));
+    if (!t->dedicated) {
+        ioThreadsExpectResult();
+        /* A runner the IO threads can't take (no active thread left, or a full queue)
+         * runs here; the reply is the same. */
+        for (int i = 0; i < t->nrunners; i++)
+            if (trySendStepJobToIOThreads(&t->runners[i].job) != C_OK)
+                while (runnerRun(&t->runners[i]));
+        return;
+    }
+    for (int i = 0; i < t->nrunners; i++) {
+        atomic_fetch_add(&R.queued, 1);
+        bool ok = spmcEnqueue(&R.tasks, &t->runners[i]);
+        serverAssert(ok); /* the queue holds every runner of the reads in flight */
+    }
+    /* Fast path: wake one parked thread only if the queue outgrows the awake threads;
+     * beforeSleep wakes the rest (one per runner no waking thread will take). The
+     * fence pairs with the one a parking thread issues after registering (Dekker). */
+    atomic_thread_fence(memory_order_seq_cst);
+    int parked = atomic_load(&R.parked_count);
+    if (parked > 0 && atomic_load(&R.queued) > R.nthreads - parked) {
+        pthread_mutex_lock(&R.lock);
+        if (R.nparked > 0 && atomic_load(&R.queued) > R.nthreads - R.nparked) wakeLocked(1);
+        pthread_mutex_unlock(&R.lock);
+    }
 }
 
 void slabReadDispatchMget(client *c, slabColl *coll, int first, int count) {
@@ -403,23 +615,36 @@ static void slabReadComplete(slabReadTask *t) {
     freeTask(t);
 }
 
-/* Completions deferred behind an IO-thread write, in order. */
 static size_t slabReadDrain(void) {
-    if (!slabReadHasDeferred()) return 0;
-    list *retry = R.deferred;
-    size_t n = listLength(retry);
-    R.deferred = listCreate();
-    listIter li;
-    listNode *ln;
-    listRewind(retry, &li);
-    while ((ln = listNext(&li))) slabReadComplete(listNodeValue(ln));
-    listRelease(retry);
+    /* A thread sets the flag after it pushes a completion, then writes the pipe. */
+    if (!atomic_load_explicit(&R.wake_pending, memory_order_acquire) && !slabReadHasDeferred()) return 0;
+    atomic_store(&R.wake_pending, 0);
+    atomic_thread_fence(memory_order_seq_cst);
+    size_t n = 0;
+    /* Completions deferred behind an IO-thread write first, in order. */
+    if (slabReadHasDeferred()) {
+        list *retry = R.deferred;
+        R.deferred = listCreate();
+        listIter li;
+        listNode *ln;
+        listRewind(retry, &li);
+        while ((ln = listNext(&li))) slabReadComplete(listNodeValue(ln));
+        listRelease(retry);
+    }
+    if (!R.started || R.nthreads == 0) return n;
+    void *batch[64];
+    size_t got;
+    while ((got = mpscDequeueBatch(&R.done, batch, 64)) > 0) {
+        for (size_t i = 0; i < got; i++) slabReadComplete(batch[i]);
+        n += got;
+    }
     return n;
 }
 
-/* beforeSleep: completions that waited for an IO thread's write. */
+/* beforeSleep: completions, then wakes for runners queued during this iteration. */
 void slabReadBeforeSleep(void) {
     slabReadDrain();
+    if (R.started && R.nthreads > 0 && atomic_load(&R.queued) > 0) wakeUncovered();
 }
 
 /* The client of an in-flight read is being unblocked by something else (freed,
@@ -446,7 +671,10 @@ void slabReadSetHold(bool hold) {
 
 sds slabReadInfo(sds info, bool debug) {
     if (!debug)
-        return sdscatprintf(info, "slab_reads_inflight:%lld\r\n", R.inflight);
+        return sdscatprintf(info,
+                            "slab_query_threads:%d\r\n"
+                            "slab_reads_inflight:%lld\r\n",
+                            R.started ? R.nthreads : 0, R.inflight);
     return sdscatprintf(info,
                         "slab_reads_dispatched:%lld\r\n"
                         "slab_reads_completed:%lld\r\n"
@@ -454,7 +682,8 @@ sds slabReadInfo(sds info, bool debug) {
                         "slab_reads_inline_small:%lld\r\n"
                         "slab_reads_inline_context:%lld\r\n"
                         "slab_reads_inline_inflight:%lld\r\n"
-                        "slab_reads_inline_no_thread:%lld\r\n",
+                        "slab_reads_inline_no_thread:%lld\r\n"
+                        "slab_query_wakes:%lld\r\n",
                         R.dispatched, R.completions, R.orphaned, R.sync_small, R.sync_context, R.sync_inflight,
-                        R.sync_no_thread);
+                        R.sync_no_thread, atomic_load_explicit(&R.wakes, memory_order_relaxed));
 }

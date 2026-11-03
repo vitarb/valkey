@@ -195,6 +195,7 @@ void slabInitServer(void) {
 
 void slabKillThreads(void) {
     slabMaintKillThreads();
+    slabReadKillThreads();
 }
 
 static void replyToWaiter(slabWaiter *w, bool timedout) {

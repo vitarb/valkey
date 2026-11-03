@@ -2399,6 +2399,7 @@ struct valkeyServer {
     size_t stream_node_max_bytes;
     /* Slab collections */
     int slab_maintenance_threads; /* Background maintenance threads; -1 = by core count, 0 = inline. */
+    int slab_query_threads;       /* Dedicated threads for large reads; 0 = the IO threads. */
     long long stream_node_max_entries;
     /* List parameters */
     int list_max_listpack_size;

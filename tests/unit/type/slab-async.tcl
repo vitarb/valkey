@@ -1,5 +1,6 @@
-# Slab reads on the IO threads: a read takes effect at its command's position, whatever
-# happens to the key while it waits, and its reply precedes later invalidations.
+# Slab reads off the main thread, on the IO threads and on dedicated threads: a read
+# takes effect at its command's position, whatever happens to the key while it waits,
+# and its reply precedes later invalidations.
 
 proc slab_fill {coll n tag {prefix k}} {
     for {set i 0} {$i < $n} {incr i 100} {
@@ -48,8 +49,8 @@ proc slab_held_read {coll {cmd SLMGET}} {
     return $rd
 }
 
-# Every large read goes to the IO threads (always active).
-foreach slab_async_overrides {{io-threads 3 io-threads-always-active yes}} {
+# Every large read goes to the IO threads (always active), then to dedicated threads.
+foreach slab_async_overrides {{io-threads 3 io-threads-always-active yes} {slab-query-threads 2}} {
 start_server [list tags {slab "external:skip"} overrides $slab_async_overrides] {
     test {Large reads run off the main thread and match the inline result} {
         r del c
