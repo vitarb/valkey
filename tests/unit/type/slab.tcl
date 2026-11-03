@@ -565,3 +565,47 @@ start_server {tags {slab "external:skip"}} {
         wait_for_condition 100 20 {[s lazyfreed_objects] > $before} else { fail "not freed lazily" }
     }
 }
+
+start_server {tags {slab "external:skip" defrag} overrides {save {}}} {
+    if {[string match {*jemalloc*} [s mem_allocator]] && [r debug mallctl arenas.page] <= 8192} {
+        test {Active defrag moves fragmented slab blocks and keeps the content} {
+            r config set activedefrag no
+            # Many small collections with small blocks, interleaved; deleting every other
+            # one leaves the survivors' blocks in half-empty allocator slabs.
+            for {set j 0} {$j < 400} {incr j} {
+                r slcreate c$j FLUSH_ENTRIES 400 BLOCK_BYTES 1024
+                set args {}
+                for {set i 0} {$i < 400} {incr i} { lappend args [format k%04d $i] [string repeat v 40] }
+                r slmset c$j {*}$args
+            }
+            for {set j 0} {$j < 400} {incr j} { r slflush c$j WAIT 0 }
+            set digest [debug_digest]
+            for {set j 0} {$j < 400} {incr j 2} { r del c$j }
+            r config set active-defrag-ignore-bytes 1
+            r config set active-defrag-threshold-lower 1
+            r config set active-defrag-cycle-min 50
+            r config set active-defrag-cycle-max 75
+            r config set activedefrag yes
+            proc defragged {} {
+                set n 0
+                for {set j 1} {$j < 400} {incr j 2} { incr n [dict get [r slinfo c$j FULL] defragged_leaves] }
+                return $n
+            }
+            wait_for_condition 200 50 {[defragged] > 0} else { fail "no slab block was moved" }
+            r config set activedefrag no
+            for {set j 1} {$j < 400} {incr j 2} {
+                wait_for_condition 100 20 {[dict get [r slinfo c$j] compaction_inflight] == 0} else { fail "busy" }
+                assert_equal OK [r debug slab verify c$j]
+                assert_equal [string repeat v 40] [r slget c$j k0123]
+            }
+            for {set j 0} {$j < 400} {incr j 2} {
+                r slcreate c$j FLUSH_ENTRIES 400 BLOCK_BYTES 1024
+                set args {}
+                for {set i 0} {$i < 400} {incr i} { lappend args [format k%04d $i] [string repeat v 40] }
+                r slmset c$j {*}$args
+                r slflush c$j WAIT 0
+            }
+            assert_equal $digest [debug_digest]
+        } {} {needs:debug}
+    }
+}

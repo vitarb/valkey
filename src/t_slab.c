@@ -9,6 +9,7 @@
  * the object glue. */
 
 #include "server.h"
+#include "allocator_defrag.h"
 #include "slab.h"
 #include "slab_block.h"
 #include "slab_hash.h"
@@ -41,6 +42,10 @@ robj *slabTypeDup(robj *o) {
 
 size_t slabTypeMemUsage(robj *o) {
     return slabCollMemUsage(objectGetVal(o));
+}
+
+void slabTypeDefrag(robj *o) {
+    slabRequestDefrag(objectGetVal(o), allocatorShouldDefrag);
 }
 
 size_t slabTypeLength(robj *o) {
