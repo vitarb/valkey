@@ -609,6 +609,7 @@ ENGINE_SERVER_OBJ = \
     siphash.o \
     slab_block.o \
     slab_fence.o \
+    slab_vlog.o \
     socket.o \
     sort.o \
     sparkline.o \
